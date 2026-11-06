@@ -1,37 +1,41 @@
 # -*- coding: utf-8 -*-
 """
-Ma collection de jeux – checklist multi-consoles pour Pythonista (iPhone / iPad)
+Ma collection de jeux – un « Pokédex » de jeux vidéo pour Pythonista (iPhone / iPad)
 
 Consoles : PS2, N64, DS, 3DS, Xbox 360, Wii, GameCube, Switch.
 
-Utilisation :
-  * Mode « Cocher » : toucher un jeu le coche / décoche (sauvegarde automatique).
-  * Mode « Infos & prix » : toucher un jeu ouvre son menu (prix détaillé,
-    condition, mon prix, corriger la fiche, eBay, Leboncoin...).
+Écrans :
+  * Accueil : une carte par console (progression, jeux obtenus, valeur).
+  * Console : grille de jaquettes numérotées. Obtenus = en couleur avec ✓,
+    manquants = en gris. Rareté ★ à ★★★★★ et prix sur chaque case.
+    Recherche, filtres (tous / obtenus / manquants), tri (n°, prix, rareté, A–Z),
+    mode « Toucher : cocher » pour cocher très vite.
+  * Fiche d'un jeu : grande jaquette, rareté, prix par condition, ventes récentes,
+    « Je l'ai », mon prix, eBay, Leboncoin, PriceCharting.
 
-Prix (sans clé API, automatique) :
-  * Les prix viennent de PriceCharting (versions PAL, en dollars convertis en euros).
-  * Ils se chargent TOUT SEULS en arrière-plan, un jeu à la fois et à un rythme
-    tranquille (≈ 1 requête toutes les 4 s) : d'abord les jeux affichés en mode
-    « Infos & prix », puis tous les jeux possédés. Un prix est gardé 30 jours.
-  * Prix affiché = la cote PriceCharting (calculée sur les ventes réelles eBay).
-    Fourchette = ventes récentes (quart le moins cher → quart le plus cher).
-  * Si le site bloque les requêtes du script, l'app bascule toute seule sur un
-    navigateur intégré invisible (le même moteur que Safari).
-  * Mauvais jeu trouvé ? Menu du jeu > « Corriger la fiche PriceCharting ».
-  * Tu peux toujours saisir ton propre prix : il est prioritaire.
-  * Clé API PriceCharting (abonnement) facultative : menu d'un jeu > « Clé API ».
+Prix et jaquettes (automatique, sans clé API) :
+  * Source : PriceCharting (versions PAL ; version US si le jeu n'est jamais sorti
+    en Europe). Dollars convertis en euros au taux du jour.
+  * Chargement en arrière-plan, un jeu à la fois (≈ 1 requête toutes les 4 s) :
+    fiche ouverte d'abord, puis console affichée, puis jeux possédés, puis le reste.
+    Premier lancement : ≈ 30 min pour tout le catalogue, ensuite gardé 30 jours.
+  * Prix = cote PriceCharting ; fourchette = ventes eBay récentes.
+  * Rareté = d'après la cote : Commun < 10 € ≤ Peu commun < 25 € ≤ Rare < 50 €
+    ≤ Très rare < 100 € ≤ Légendaire.
+  * Si le site bloque le script, bascule automatique sur un navigateur intégré.
+  * Mauvais jeu trouvé ? Fiche du jeu > « Corriger la fiche ».
 
 Fichiers (dans Documents/) :
   collection_jeux.json      jeux possédés, conditions, prix saisis, fiches corrigées
-                            (migration automatique depuis l'ancien collection_ps2.json)
   prix_cache.json           prix déjà chargés
-  pricecharting_token.txt   clé API PriceCharting (facultative)
+  jaquettes/                jaquettes téléchargées
   valeur_collection.csv     export de la valeur de la collection
+  pricecharting_token.txt   clé API PriceCharting (facultative)
   debug_pricecharting.html  dernière page non reconnue (pour diagnostic)
 """
 
 import csv
+import hashlib
 import html as htmllib
 import json
 import os
@@ -54,8 +58,9 @@ CACHE_FILE = os.path.join(DOCS, "prix_cache.json")
 CSV_FILE = os.path.join(DOCS, "valeur_collection.csv")
 DEBUG_FILE = os.path.join(DOCS, "debug_pricecharting.html")
 TOKEN_FILE = os.path.join(DOCS, "pricecharting_token.txt")
+COVER_DIR = os.path.join(DOCS, "jaquettes")
 
-CACHE_VERSION = 2           # change si le format du cache change (l'ancien est ignoré)
+CACHE_VERSION = 3           # change si le format du cache change (l'ancien est ignoré)
 CACHE_TTL = 30 * 24 * 3600  # un prix est gardé 30 jours (les cotes bougent peu)
 ERR_TTL = 6 * 3600          # après un échec sur un jeu, nouvel essai automatique 6 h plus tard
 MIN_GAP = 3.5               # au moins 3,5 s (+ 0 à 1,5 s au hasard) entre deux requêtes
@@ -409,7 +414,33 @@ GAMES_BY = {
 
 # Noms à chercher sur PriceCharting quand le titre du catalogue est en français
 # ou différent du titre PAL anglais utilisé par le site.
-SEARCH_ALIASES = {}
+SEARCH_ALIASES = {
+    "Jak II: Hors-la-loi": "Jak II: Renegade",
+    "Sly 2: Association de voleurs": "Sly 2: Band of Thieves",
+    "Dragon Quest VIII: L’Odyssée du roi maudit": "Dragon Quest VIII: Journey of the Cursed King",
+    "Tony Hawk’s Pro Skater 3": "Tony Hawk 3",
+    "Tony Hawk’s Pro Skater 4": "Tony Hawk 4",
+    "Fatal Frame / Project Zero": "Project Zero",
+    "Fatal Frame II: Crimson Butterfly": "Project Zero 2",
+    "Fatal Frame III: The Tormented": "Project Zero 3",
+    "Bully / Canis Canem Edit": "Canis Canem Edit / Bully",
+    "Ace Combat 04: Shattered Skies": "Ace Combat: Distant Thunder",
+    "Ace Combat 5: The Unsung War": "Ace Combat: Squadron Leader",
+    "Ace Combat Zero: The Belkan War": "Ace Combat: The Belkan War",
+    "Star Fox 64": "Lylat Wars",
+}
+
+# Nom de la console sur PriceCharting pour la version US (jeux jamais sortis en Europe).
+US_PC = {
+    "PS2": ("playstation-2", "Playstation 2"),
+    "N64": ("nintendo-64", "Nintendo 64"),
+    "DS": ("nintendo-ds", "Nintendo DS"),
+    "3DS": ("nintendo-3ds", "Nintendo 3DS"),
+    "360": ("xbox-360", "Xbox 360"),
+    "Wii": ("wii", "Wii"),
+    "GC": ("gamecube", "Gamecube"),
+    "Switch": ("nintendo-switch", "Nintendo Switch"),
+}
 
 # condition : (id de la cote sur la page du jeu, bloc des ventes, champ API, colonne recherche)
 COND = {
@@ -418,8 +449,6 @@ COND = {
     "Neuf": ("new_price", "new", "new-price", "new_price"),
 }
 DEFAULT_COND = "Disque seul"
-FILTERS = ["Tous", "À acheter", "Possédés"]
-MODE_CHECK, MODE_INFO = 0, 1
 
 
 # ====================================================================== utilitaires
@@ -838,6 +867,16 @@ def search_url(label, game):
     return BASE + "/search-products?type=prices&q=" + quote_plus(q)
 
 
+COVER_RE = re.compile(r"https://storage\.googleapis\.com/images\.pricecharting\.com/"
+                      r"[A-Za-z0-9_\-]+/(?:60|240|1600)\.jpg")
+
+
+def cover_url(src):
+    """Adresse de la jaquette en 240 px (bonne qualité, fichier léger)."""
+    m = COVER_RE.search(src or "")
+    return re.sub(r"/(?:60|1600)\.jpg$", "/240.jpg", m.group(0)) if m else None
+
+
 def _clean_text(s):
     return re.sub(r"\s+", " ", htmllib.unescape(re.sub(r"<[^>]+>", " ", s))).strip()
 
@@ -861,15 +900,17 @@ def parse_search(page, slug):
             p = re.search(r'<td class="price numeric %s">\s*<span class="js-price">\s*%s'
                           % (v[3], AMOUNT), chunk)
             guide[cond] = _amount(p.group(1)) if p else None
+        im = re.search(r'<img class="photo"[^>]*src="([^"]+)"', chunk)
         results.append({"url": url.split("?")[0], "title": _clean_text(m.group(2)),
-                        "guide": guide})
+                        "guide": guide, "img": cover_url(im.group(1)) if im else None})
     return results
 
 
 def parse_game_page(page):
-    """Page d'un jeu : nom, cotes et ventes eBay réalisées par condition."""
+    """Page d'un jeu : nom, cotes, ventes eBay réalisées par condition, jaquette."""
     m = re.search(r'<h1 id="product_name"[^>]*>(.*?)<a', page, re.S)
     title = _clean_text(m.group(1)) if m else ""
+    img = cover_url(page)
 
     guide = {}
     for cond, v in COND.items():
@@ -898,7 +939,7 @@ def parse_game_page(page):
             kept = [x for x in values if g / 3.0 <= x <= g * 3.0]
             values = kept or values
         sales[cond] = values
-    return title, guide, sales
+    return title, guide, sales, img
 
 
 # ---------------------------------------------------------------- choix du bon jeu
@@ -910,63 +951,102 @@ EDITION = {"platinum", "essentials", "classics", "greatest", "hits", "selects", 
            "steelbook", "version", "budget", "best", "favourites", "favorites", "pal",
            "uk", "fr", "french", "german", "italian", "spanish", "value", "nintendo",
            "playstation", "ps2", "wii", "xbox", "360", "ds", "3ds", "gamecube", "switch",
-           "n64", "game", "video", "standard", "reprint", "new"}
+           "n64", "game", "video", "standard", "reprint", "new", "big"}
 BAD = {"demo", "promo", "manual", "guide", "strategy", "case", "only", "soundtrack",
        "amiibo", "controller", "bundle", "console", "system", "pack", "box", "art",
-       "poster", "not", "resale", "disc", "cover", "sleeve", "kiosk", "trial"}
+       "poster", "not", "resale", "disc", "cover", "sleeve", "kiosk", "trial", "press",
+       "kit", "slim", "wheel", "force", "steering", "headset", "microphone", "mic"}
+MATCH_MIN = 0.6
 
 
 def title_tokens(s):
-    s = normalize(s).replace("&", " and ").replace("'", "")
+    s = normalize(s).replace("&", " and ")
+    s = re.sub(r"\btom clancy'?s?\b", " ", s)          # « Tom Clancy's Splinter Cell »
+    s = re.sub(r"\bthe legend of zelda\b", "zelda", s)  # PriceCharting : « Zelda ... »
+    s = re.sub(r"'s\b", "", s).replace("'", "").replace(".", "")
+    s = re.sub(r"(?<=[a-z0-9])-(?=[a-z])", "", s)      # Spider-Man → spiderman
     s = re.sub(r"[^a-z0-9]+", " ", s)
     return [ROMAN.get(t, t) for t in s.split() if t not in STOP]
 
 
+def _merge(tokens, other):
+    """Recolle deux mots si l'autre titre les écrit attachés (Soul Calibur / SoulCalibur)."""
+    out, i = [], 0
+    while i < len(tokens):
+        if i + 1 < len(tokens) and tokens[i] + tokens[i + 1] in other:
+            out.append(tokens[i] + tokens[i + 1])
+            i += 2
+        else:
+            out.append(tokens[i])
+            i += 1
+    return out
+
+
 def match_score(wanted, candidate):
-    w, c = set(title_tokens(wanted)), set(title_tokens(candidate))
-    if not w or not c:
-        return 0.0
+    """1 = même titre ; diminue avec les mots en trop ou manquants."""
+    wl, cl = title_tokens(wanted), title_tokens(candidate)
+    wl = _merge(wl, set(cl))
+    cl = _merge(cl, set(wl))
+    w, c = set(wl), set(cl)
     common = len(w & c)
     if not common:
         return 0.0
     missing = w - c
+    complete = not missing
     penalty = 0.0
     for t in c - w:
         if t in BAD:
-            penalty += 2.0
+            penalty += 2.0       # démo, promo, notice, pack console...
         elif t.isdigit():
-            penalty += 1.5   # « Halo 3 » ≠ « Halo 4 »
+            penalty += 2.0       # « Halo 3 » ≠ « Halo 3 ODST » ≠ « Halo 4 »
         elif t in EDITION:
-            penalty += 0.15  # « Platinum » : même jeu, réédition
+            penalty += 0.15      # « Platinum » : même jeu, réédition
         else:
-            penalty += 1.0
+            penalty += 0.4 if complete and len(w) > 1 else 1.0
     penalty += sum(1.5 if t.isdigit() else 1.0 for t in missing)
     return common / (len(w) + penalty)
 
 
+def name_variants(game):
+    """(nom, coefficient) : titre complet, autres titres « X / Y », titres sans sous-titre."""
+    names = [search_name(game)] + [strip_accents(p.strip().replace("’", "'"))
+                                   for p in SEARCH_ALIASES.get(game, game).split(" / ")[1:]]
+    out = [(n, 1.0) for n in names]
+    for n in names:
+        if ":" in n:
+            out.append((n.split(":")[0].strip(), 0.95))
+    return out
+
+
 def best_match(game, results):
-    names = [search_name(game)] + [p.strip() for p in game.split(" / ")[1:]]
+    names = name_variants(game)
     best, best_score = None, 0.0
     for r in results:
-        score = max(match_score(n, r["title"]) for n in names)
+        score = max(match_score(n, r["title"]) * k for n, k in names)
         if score > best_score:
             best, best_score = r, score
-    return (best, best_score) if best_score >= 0.55 else (None, best_score)
+    return (best, best_score) if best_score >= MATCH_MIN else (None, best_score)
 
 
 # ---------------------------------------------------------------- récupération d'un prix
-def _entry(url, title, guide, sales, partial):
+def _entry(url, title, guide, sales, partial, img=None, region="PAL"):
     return {"v": CACHE_VERSION, "ts": time.time(), "url": url, "title": title,
-            "guide": guide, "sales": sales, "partial": partial}
+            "guide": guide, "sales": sales, "partial": partial, "img": img,
+            "region": region}
+
+
+def region_of(url):
+    return "PAL" if "/game/pal-" in (url or "") else "US"
 
 
 def fetch_game_page(url):
     final, page = NET.get(url)
-    title, guide, sales = parse_game_page(page)
+    title, guide, sales, img = parse_game_page(page)
     if not any(guide.values()) and not any(sales.values()):
         save_debug(page)
         raise PriceError("page lue mais prix non reconnus (voir debug_pricecharting.html)")
-    return _entry(final.split("?")[0], title, guide, sales, False)
+    final = final.split("?")[0]
+    return _entry(final, title, guide, sales, False, img, region_of(final))
 
 
 def fetch_api(label, game, token):
@@ -997,32 +1077,59 @@ def fetch_api(label, game, token):
     return _entry(search_url(label, game), best["title"], guide, {}, True)
 
 
+def _search_once(game, query, slug, console_name):
+    """Une recherche. Renvoie ('page', entrée) / ('row', résultat) / None."""
+    final, page = NET.get(BASE + "/search-products",
+                          {"type": "prices", "q": "%s %s" % (query, console_name)})
+    if "/game/%s/" % slug in final:  # le site a redirigé directement vers un jeu : on vérifie
+        title, guide, sales, img = parse_game_page(page)
+        score = max(match_score(n, title) * k for n, k in name_variants(game))
+        if score >= MATCH_MIN and (any(guide.values()) or any(sales.values())):
+            final = final.split("?")[0]
+            return "page", _entry(final, title, guide, sales, False, img, region_of(final))
+        return None
+    best, _ = best_match(game, parse_search(page, slug))
+    return ("row", best) if best else None
+
+
+def find_product(label, game):
+    """Cherche le jeu : 1) titre complet en PAL ; 2) titre court en PAL ;
+    3) en dernier recours, la version US (jeu jamais sorti en Europe)."""
+    slug, pcname = PC[label]
+    full = search_name(game)
+    queries = [full]
+    short = full.split(":")[0].strip()
+    if short != full and len(short) >= 3:
+        queries.append(short)
+    for q in queries:
+        found = _search_once(game, q, slug, pcname)
+        if found:
+            return found
+    us_slug, us_name = US_PC[label]
+    return _search_once(game, full, us_slug, us_name)
+
+
 def fetch_prices(label, game, fixed_url=None, known_url=None, full=False, token=None):
     """Prix d'un jeu.
     - fiche connue (corrigée à la main ou trouvée avant) : 1 requête sur la page du jeu ;
-    - sinon : 1 recherche, qui contient déjà les cotes de chaque résultat ;
+    - sinon : recherche (qui contient déjà les cotes de chaque résultat) ;
       full=True ajoute la page du jeu (ventes détaillées)."""
     if token and not fixed_url:
         return fetch_api(label, game, token)
     url = fixed_url or known_url
     if url:
         return fetch_game_page(url)
-    slug, pcname = PC[label]
-    final, page = NET.get(search_url(label, game))
-    if "/game/%s/" % slug in final:  # le site a redirigé directement vers le jeu
-        title, guide, sales = parse_game_page(page)
-        if any(guide.values()) or any(sales.values()):
-            return _entry(final.split("?")[0], title, guide, sales, False)
-    results = parse_search(page, slug)
-    best, _ = best_match(game, results)
-    if not best:
-        if not results and "product-" not in page:
-            save_debug(page)
-        raise PriceError("introuvable sur PriceCharting (%s). Utilise « Corriger la fiche "
-                         "PriceCharting » pour choisir le bon jeu." % pcname)
-    if full or not any(best["guide"].values()):
-        return fetch_game_page(best["url"])
-    return _entry(best["url"], best["title"], best["guide"], {}, True)
+    found = find_product(label, game)
+    if not found:
+        raise PriceError("introuvable sur PriceCharting (%s). Utilise « Corriger la fiche » "
+                         "pour choisir le bon jeu." % PC[label][1])
+    kind, data = found
+    if kind == "page":
+        return data
+    if full or not any(data["guide"].values()):
+        return fetch_game_page(data["url"])
+    return _entry(data["url"], data["title"], data["guide"], {}, True, data.get("img"),
+                  region_of(data["url"]))
 
 
 def estimate(entry, cond, fx):
@@ -1153,6 +1260,34 @@ class PriceCache:
         return DEFAULT_FX, "taux APPROXIMATIF %s (hors ligne)" % str(DEFAULT_FX).replace(".", ",")
 
 
+
+# ====================================================================== rareté
+# Basée sur la cote « Disque seul » en euros (à défaut, la cote « Complet »).
+RARITY = [  # (seuil minimum en €, nom, nombre d'étoiles, couleur)
+    (0, "Commun", 1, "#8e8e93"),
+    (10, "Peu commun", 2, "#34c759"),
+    (25, "Rare", 3, "#0a84ff"),
+    (50, "Très rare", 4, "#af52de"),
+    (100, "Légendaire", 5, "#ff9f0a"),
+]
+SORTS = ["N°", "Prix", "Rareté", "A–Z"]
+FILTERS = ["Tous", "Obtenus", "Manquants"]
+
+
+def rarity_for(value_eur):
+    if value_eur is None:
+        return None
+    tier = RARITY[0]
+    for t in RARITY:
+        if value_eur >= t[0]:
+            tier = t
+    return tier
+
+
+def stars(n):
+    return "★" * n + "☆" * (5 - n)
+
+
 # ====================================================================== thème
 def make_theme():
     dark = False
@@ -1161,402 +1296,1114 @@ def make_theme():
     except Exception:
         pass
     if dark:
-        return {"bg": "#1c1c1e", "field": "#2c2c2e", "text": "#f2f2f7", "sub": "#98989f",
-                "owned": "#32d74b", "bar": "#2c2c2e", "accent": "#0a84ff",
-                "status": "#ff9f0a"}
-    return {"bg": "#ffffff", "field": "#f2f2f7", "text": "#1c1c1e", "sub": "#8e8e93",
-            "owned": "#22863a", "bar": "#f2f2f7", "accent": "#007aff",
-            "status": "#c76a00"}
+        return {"bg": "#000000", "card": "#1c1c1e", "field": "#2c2c2e", "text": "#f2f2f7",
+                "sub": "#98989f", "line": "#38383a", "owned": "#32d74b", "accent": "#0a84ff",
+                "status": "#ff9f0a", "header": "#1c1c1e", "placeholder": "#2c2c2e"}
+    return {"bg": "#f2f2f7", "card": "#ffffff", "field": "#e5e5ea", "text": "#1c1c1e",
+            "sub": "#6e6e73", "line": "#d1d1d6", "owned": "#248a3d", "accent": "#007aff",
+            "status": "#c76a00", "header": "#ffffff", "placeholder": "#e5e5ea"}
 
 
-# ====================================================================== interface
-class GameChecklist(ui.View):
+# ====================================================================== jaquettes
+class CoverStore:
+    """Télécharge les jaquettes une fois, les garde dans Documents/jaquettes,
+    et prépare une version grise pour les jeux pas encore obtenus."""
+
+    def __init__(self, app):
+        self.app = app
+        self.lock = threading.Lock()
+        self.queue = []
+        self.failed = set()
+        self.event = threading.Event()
+        try:
+            os.makedirs(COVER_DIR, exist_ok=True)
+        except OSError:
+            pass
+
+    @staticmethod
+    def path(url, grey=False):
+        h = hashlib.md5(url.encode("utf-8")).hexdigest()
+        return os.path.join(COVER_DIR, h + ("_g" if grey else "") + ".jpg")
+
+    def local(self, url, grey=False):
+        """Chemin du fichier s'il existe déjà, sinon None (et demande le téléchargement)."""
+        if not url:
+            return None
+        p = self.path(url, grey)
+        if os.path.exists(p):
+            return p
+        if grey and os.path.exists(self.path(url)):
+            return None  # couleur dispo mais pas de gris (pas de PIL) : l'appelant atténue
+        self.want(url)
+        return None
+
+    def want(self, url):
+        """Demande une jaquette ; la dernière demandée passe en premier
+        (fiche ouverte, cases visibles à l'écran)."""
+        with self.lock:
+            if url in self.failed or os.path.exists(self.path(url)):
+                return
+            if url in self.queue:
+                self.queue.remove(url)
+            self.queue.append(url)
+        self.event.set()
+
+    def worker(self):
+        import requests
+        while not self.app.closed:
+            with self.lock:
+                url = self.queue.pop() if self.queue else None  # le plus récent d'abord
+            if not url:
+                self.event.wait(20)
+                self.event.clear()
+                continue
+            try:
+                r = requests.get(url, timeout=15, headers={"User-Agent": Fetcher.HEADERS["User-Agent"]})
+                if r.status_code != 200 or not r.content:
+                    raise IOError("HTTP %d" % r.status_code)
+                tmp = self.path(url) + ".tmp"
+                with open(tmp, "wb") as f:
+                    f.write(r.content)
+                self._make_grey(tmp, self.path(url, True))
+                os.replace(tmp, self.path(url))
+            except Exception:
+                with self.lock:
+                    self.failed.add(url)
+                continue
+            self.app.notify_cover(url)
+            time.sleep(0.15)
+
+    @staticmethod
+    def _make_grey(src, dst):
+        try:
+            from PIL import Image, ImageEnhance
+            im = Image.open(src).convert("L")
+            im = ImageEnhance.Brightness(im).enhance(0.9).convert("RGB")
+            im.save(dst, "JPEG", quality=80)
+        except Exception:
+            pass
+
+
+def load_image(path):
+    try:
+        return ui.Image.named(path) if path else None
+    except Exception:
+        return None
+
+
+# ====================================================================== cerveau de l'app
+class App:
+    """Données + chargement automatique des prix/jaquettes. Les vues s'y abonnent."""
+
     def __init__(self):
-        super().__init__()
-        self.name = "Ma collection de jeux"
         self.theme = make_theme()
-        self.background_color = self.theme["bg"]
-
         self.coll = Collection()
         self.prices = PriceCache()
-        self.token = read_token()
-
-        self.label = LABELS[0]       # console affichée
-        self.filter_index = 0        # index dans FILTERS
-        self.mode = MODE_CHECK
-        self.query = ""
-        self.rows = []               # [(section, jeux affichés, possédés, total)]
+        self.covers = CoverStore(self)
+        self.listeners = []
         self.closed = False
-        self.wake = threading.Event()  # réveille le chargeur de prix
-        self.busy = False            # calcul de valeur en cours
-        self.loading = None          # jeu dont le prix est en cours de chargement
-        self.loading_label = None
-        self.last_reload = 0.0
+        self.wake = threading.Event()
+        self.focus = None        # console affichée (ses jeux passent en priorité)
+        self.priority = None     # (console, jeu) dont la fiche est ouverte
+        self.loading = None
+        self.status = ""
+        self.busy = False
+        self.fx_checked = False
+        self.number = {l: {g: i + 1 for i, g in enumerate(GAMES_BY[l])} for l in LABELS}
+        self.section_of = {l: {} for l in LABELS}
+        for l in LABELS:
+            for s, games in SECTIONS_BY[l]:
+                for g in games:
+                    self.section_of[l].setdefault(g, s)
 
-        self.build_ui()
+    def start(self):
+        run_thread(self.price_worker)
+        run_thread(self.covers.worker)
+
+    def stop(self):
+        self.closed = True
+        self.wake.set()
+        self.covers.event.set()
+        self.prices.save()
+
+    # ---------------------------------------------------------- abonnements
+    def subscribe(self, view):
+        if view not in self.listeners:
+            self.listeners.append(view)
+
+    def unsubscribe(self, view):
+        if view in self.listeners:
+            self.listeners.remove(view)
+
+    def notify(self, label=None, game=None):
+        def _do():
+            for v in list(self.listeners):
+                try:
+                    v.on_data(label, game)
+                except Exception:
+                    pass
+        ui.delay(_do, 0)
+
+    def notify_cover(self, url):
+        def _do():
+            for v in list(self.listeners):
+                try:
+                    v.on_cover(url)
+                except Exception:
+                    pass
+        ui.delay(_do, 0)
+
+    def set_status(self, text):
+        self.status = text
+
+        def _do():
+            for v in list(self.listeners):
+                try:
+                    v.on_status(text)
+                except Exception:
+                    pass
+        ui.delay(_do, 0)
+
+    # ---------------------------------------------------------- lecture des données
+    def entry(self, label, game):
+        e = self.prices.get(key_of(label, game))
+        return e if PriceCache.has_price(e) else None
+
+    def cover_url(self, label, game):
+        e = self.prices.get(key_of(label, game))
+        return e.get("img") if e and e.get("v") == CACHE_VERSION else None
+
+    def price(self, label, game, cond=None):
+        """{'mid','min','max','n','manual'} en euros, ou None."""
+        manual = self.coll.manual_price(label, game)
+        if manual is not None:
+            return {"min": manual, "mid": manual, "max": manual, "n": 0, "manual": True}
+        e = self.entry(label, game)
+        if not e:
+            return None
+        return estimate(e, cond or self.coll.condition(label, game), self.prices.fx_quick())
+
+    def rarity(self, label, game):
+        e = self.entry(label, game)
+        if not e:
+            return None
+        fx = self.prices.fx_quick()
+        for c in ("Disque seul", "Complet"):
+            g = e["guide"].get(c)
+            if g:
+                return rarity_for(g * fx)
+        return None
+
+    def error_of(self, label, game):
+        e = self.prices.get(key_of(label, game))
+        if e and e.get("v") == CACHE_VERSION and e.get("err") and not self.entry(label, game):
+            return e["err"]
+        return None
+
+    def console_value(self, label):
+        total, known = 0.0, 0
+        for g in self.coll.owned_games(label):
+            p = self.price(label, g)
+            if p:
+                total += p["mid"]
+                known += 1
+        return total, known
+
+    # ---------------------------------------------------------- actions
+    def toggle(self, label, game):
+        now = self.coll.toggle(label, game)
+        self.save()
+        self.notify(label, game)
+        return now
+
+    def save(self):
+        err = self.coll.save()
+        if err:
+            hud("Erreur de sauvegarde : %s" % err, "error", 2.5)
+
+    def refetch(self, label, game, full=False):
+        self.prices.forget(key_of(label, game))
+        if full:
+            self.priority = (label, game)
+        self.notify(label, game)
+        self.wake.set()
+
+    # ---------------------------------------------------------- chargement automatique
+    def _needs(self, label, game, full=False):
+        key = key_of(label, game)
+        if full:
+            e = self.prices.get(key)
+            if self.prices.is_fresh(key) and not e.get("partial"):
+                return False
+            err_ts = (e or {}).get("err_ts")
+            return not (isinstance(err_ts, (int, float)) and time.time() - err_ts < 120)
+        return self.prices.needs_fetch(key)
+
+    def next_job(self):
+        """(console, jeu, page complète ?) : fiche ouverte, puis console affichée,
+        puis jeux possédés, puis tout le reste du catalogue (pour les jaquettes)."""
+        if self.priority and self._needs(self.priority[0], self.priority[1], True):
+            return self.priority + (True,)
+        order = []
+        if self.focus:
+            order.append([(self.focus, g) for g in GAMES_BY[self.focus]])
+        order.append([(l, g) for l in LABELS for g in self.coll.owned_games(l)])
+        order.append([(l, g) for l in LABELS for g in GAMES_BY[l]])
+        for group in order:
+            for l, g in group:
+                if self._needs(l, g):
+                    return l, g, False
+        return None
+
+    def remaining(self):
+        return sum(1 for l in LABELS for g in GAMES_BY[l] if self.prices.needs_fetch(key_of(l, g)))
+
+    def price_worker(self):
+        time.sleep(0.8)
+        while not self.closed:
+            if NET.blocked_minutes():
+                self.set_status("PriceCharting en pause encore %d min" % NET.blocked_minutes())
+                self.wake.wait(60)
+                self.wake.clear()
+                continue
+            job = self.next_job()
+            if not job:
+                self.loading = None
+                self.set_status("Catalogue à jour : prix et jaquettes chargés")
+                self.wake.wait(60)
+                self.wake.clear()
+                continue
+            if not self.fx_checked:
+                self.prices.get_fx()
+                self.fx_checked = True
+            label, game, full = job
+            key = key_of(label, game)
+            self.loading = (label, game)
+            left = self.remaining()
+            self.set_status("Chargement %s : %s  (encore %d)" % (label, game, left))
+            try:
+                e = fetch_prices(label, game, fixed_url=self.coll.fixed_url(label, game),
+                                 known_url=self.prices.known_url(key), full=full,
+                                 token=None if full else read_token())
+                old = self.prices.get(key)
+                if not e.get("img") and old and old.get("img"):
+                    e["img"] = old["img"]
+                self.prices.put(key, e)
+            except Exception as ex:
+                self.prices.record_error(key, str(ex))
+            if full and self.priority == (label, game):
+                self.priority = None
+            self.loading = None
+            self.prices.save()
+            url = self.cover_url(label, game)
+            if url:
+                self.covers.want(url)
+            self.notify(label, game)
+
+
+# ====================================================================== petits éléments
+def make_label(text, frame, size=13, bold=False, color=None, align="left", lines=1):
+    l = ui.Label(frame=frame)
+    l.text = text
+    l.font = ("<System-Bold>" if bold else "<System>", size)
+    if color:
+        l.text_color = color
+    l.alignment = {"left": ui.ALIGN_LEFT, "center": ui.ALIGN_CENTER,
+                   "right": ui.ALIGN_RIGHT}[align]
+    l.number_of_lines = lines
+    return l
+
+
+def make_button(title, frame, action, color, text_color="white", size=14):
+    b = ui.Button(title=title, frame=frame)
+    b.background_color = color
+    b.tint_color = text_color
+    b.corner_radius = 10
+    b.font = ("<System-Bold>", size)
+    b.action = action
+    return b
+
+
+class Screen(ui.View):
+    """Écran poussé dans la pile de navigation."""
+    title = ""
+
+    def on_data(self, label, game):
+        pass
+
+    def on_cover(self, url):
+        pass
+
+    def on_status(self, text):
+        pass
+
+    def on_show(self):
+        pass
+
+    def on_hide(self):
+        pass
+
+    def later(self, fn, delay):
+        """Regroupe les mises à jour rapprochées : fn n'est appelée qu'une fois."""
+        if getattr(self, "_later_pending", False):
+            return
+        self._later_pending = True
+
+        def run():
+            self._later_pending = False
+            if not self.hidden:
+                fn()
+        ui.delay(run, delay)
+
+
+# ====================================================================== navigation
+class AppView(ui.View):
+    """Fenêtre principale : barre du haut (retour + titre) et pile d'écrans."""
+
+    def __init__(self, app):
+        super().__init__()
+        self.app = app
+        t = app.theme
+        self.name = "Ma collection de jeux"
+        self.background_color = t["bg"]
+        self.stack = []
+        self.bar = ui.View(background_color=t["header"])
+        self.add_subview(self.bar)
+        self.back = ui.Button(title="‹ Retour")
+        self.back.font = ("<System>", 16)
+        self.back.tint_color = t["accent"]
+        self.back.action = lambda s: self.pop()
+        self.bar.add_subview(self.back)
+        self.title_label = make_label("", (0, 0, 10, 10), 16, True, t["text"], "center")
+        self.bar.add_subview(self.title_label)
+        self.right = None
+        self.line = ui.View(background_color=t["line"])
+        self.bar.add_subview(self.line)
         try:
             NET.web = WebFetcher(self)
         except Exception:
             NET.web = None
-        self.layout()
-        self.refresh()
-        run_thread(self.price_worker)
 
-    # -------------------------------------------------------------- construction
-    def build_ui(self):
-        t = self.theme
+    def push(self, screen):
+        if self.stack:
+            self.stack[-1].on_hide()
+            self.stack[-1].hidden = True
+        self.stack.append(screen)
+        self.add_subview(screen)
+        self.app.subscribe(screen)
+        self.layout()
+        screen.on_show()
+        self._update_bar()
+
+    def pop(self):
+        if len(self.stack) <= 1:
+            return
+        s = self.stack.pop()
+        s.on_hide()
+        self.app.unsubscribe(s)
+        self.remove_subview(s)
+        top = self.stack[-1]
+        top.hidden = False
+        top.on_show()
+        self.layout()
+        self._update_bar()
+
+    def _update_bar(self):
+        top = self.stack[-1]
+        self.title_label.text = top.title
+        self.back.hidden = len(self.stack) <= 1
+        if self.right:
+            self.bar.remove_subview(self.right)
+            self.right = None
+        item = getattr(top, "bar_button", None)
+        if item:
+            title, action = item
+            b = ui.Button(title=title)
+            b.font = ("<System>", 16)
+            b.tint_color = self.app.theme["accent"]
+            b.action = action
+            self.right = b
+            self.bar.add_subview(b)
+        self.layout()
+
+    def layout(self):
+        w, h = self.width, self.height
+        self.bar.frame = (0, 0, w, 44)
+        self.back.frame = (4, 0, 90, 44)
+        self.title_label.frame = (96, 0, w - 192, 44)
+        if self.right:
+            self.right.frame = (w - 100, 0, 96, 44)
+        self.line.frame = (0, 43.5, w, 0.5)
+        for s in self.stack:
+            s.frame = (0, 44, w, h - 44)
+
+    def will_close(self):
+        self.app.stop()
+
+
+# ====================================================================== accueil
+class HomeScreen(Screen):
+    title = "Ma collection"
+
+    def __init__(self, app, nav):
+        super().__init__()
+        self.app, self.nav = app, nav
+        self.background_color = app.theme["bg"]
+        self.bar_button = ("Exporter", lambda s: self.export())
+        self.scroll = ui.ScrollView()
+        self.scroll.always_bounce_vertical = True
+        self.add_subview(self.scroll)
+        self.status = make_label("", (0, 0, 10, 10), 11, False, app.theme["status"])
+        self.add_subview(self.status)
+        self._dirty = True
+
+    def on_show(self):
+        self.app.focus = None
+        self.build()
+
+    def on_data(self, label, game):
+        self._dirty = True
+        if not self.hidden:
+            self.later(self.build, 0.8)
+
+    def on_status(self, text):
+        self.status.text = text
+
+    def layout(self):
+        w, h = self.width, self.height
+        self.status.frame = (14, h - 22, w - 28, 18)
+        self.scroll.frame = (0, 0, w, h - 24)
+        self.build()
+
+    def build(self):
+        t = self.app.theme
+        sv = self.scroll
+        for v in list(sv.subviews):
+            sv.remove_subview(v)
+        w = self.width
+        if w < 50:
+            return
+        pad = 14
+        y = pad
+        # --- résumé
+        owned = sum(self.app.coll.count(l) for l in LABELS)
+        total = sum(len(GAMES_BY[l]) for l in LABELS)
+        value = sum(self.app.console_value(l)[0] for l in LABELS)
+        card = ui.View(frame=(pad, y, w - 2 * pad, 132), background_color=t["card"])
+        card.corner_radius = 14
+        card.add_subview(make_label("Toutes consoles", (16, 12, w, 18), 13, False, t["sub"]))
+        card.add_subview(make_label("%d / %d jeux" % (owned, total), (16, 32, w, 30),
+                                    26, True, t["text"]))
+        card.add_subview(make_label("Valeur estimée : %s" % eur(value), (16, 64, w, 20),
+                                    15, False, t["text"]))
+        cw = w - 2 * pad
+        card.add_subview(make_button("Rapport de valeur", (16, 92, (cw - 44) / 2, 30),
+                                     lambda s: self.app_value(None), t["accent"], size=13))
+        card.add_subview(make_button("Rafraîchir les prix", (28 + (cw - 44) / 2, 92,
+                                                              (cw - 44) / 2, 30),
+                                     lambda s: self.refresh_all(), t["field"], t["accent"], 13))
+        sv.add_subview(card)
+        y += 132 + pad
+        # --- une carte par console
+        cols = 2 if w >= 600 else 1
+        cw = (w - pad * (cols + 1)) / cols
+        for i, (label, full, _, _, _) in enumerate(CONSOLES):
+            col = i % cols
+            if col == 0 and i:
+                y += 96 + 10
+            x = pad + col * (cw + pad)
+            sv.add_subview(self.console_card(label, full, (x, y, cw, 96)))
+        y += 96 + pad
+        sv.content_size = (w, y)
+        self._dirty = False
+
+    def console_card(self, label, full, frame):
+        t = self.app.theme
+        x, y, w, h = frame
+        card = ui.View(frame=frame, background_color=t["card"])
+        card.corner_radius = 14
+        got, total = self.app.coll.count(label), len(GAMES_BY[label])
+        value, known = self.app.console_value(label)
+        pct = got / float(total) if total else 0
+        card.add_subview(make_label(full, (16, 12, w - 120, 22), 17, True, t["text"]))
+        card.add_subview(make_label("%d / %d" % (got, total), (w - 110, 12, 94, 22), 15, True,
+                                    t["owned"] if got else t["sub"], "right"))
+        track = ui.View(frame=(16, 44, w - 32, 8), background_color=t["field"])
+        track.corner_radius = 4
+        fill = ui.View(frame=(0, 0, max(8, (w - 32) * pct), 8), background_color=t["owned"])
+        fill.corner_radius = 4
+        fill.hidden = not got
+        track.add_subview(fill)
+        card.add_subview(track)
+        sub = "%d %% complété" % round(pct * 100)
+        if got:
+            sub += "   •   valeur %s" % eur(value)
+            if known < got:
+                sub += " (%d/%d prix)" % (known, got)
+        card.add_subview(make_label(sub, (16, 60, w - 50, 22), 12, False, t["sub"]))
+        card.add_subview(make_label("›", (w - 30, 56, 20, 26), 22, False, t["sub"], "right"))
+        b = ui.Button(frame=(0, 0, w, h))
+        b.action = lambda s, l=label: self.nav.push(ConsoleScreen(self.app, self.nav, l))
+        card.add_subview(b)
+        return card
+
+    def refresh_all(self):
+        n = 0
+        for l in LABELS:
+            for g in GAMES_BY[l]:
+                e = self.app.prices.get(key_of(l, g))
+                if e and e.get("v") == CACHE_VERSION:
+                    e = dict(e)
+                    e["ts"] = 0          # périmé : sera rechargé
+                    e.pop("err_ts", None)
+                    self.app.prices.put(key_of(l, g), e)
+                    n += 1
+        self.app.wake.set()
+        hud("Mise à jour des prix lancée", "success", 1.0)
+
+    def app_value(self, only):
+        compute_value(self.app, only)
+
+    @ui.in_background
+    def export(self):
+        lines = []
+        for label, full, sections, _, _ in CONSOLES:
+            owned = self.app.coll.owned[label]
+            lines += ["MA COLLECTION %s (%d/%d)" % (full.upper(), self.app.coll.count(label),
+                                                   len(GAMES_BY[label])), ""]
+            for section, games in sections:
+                lines.append(section)
+                for g in games:
+                    lines.append("%s %s" % ("[x]" if g in owned else "[ ]", g))
+                lines.append("")
+            lines.append("")
+        try:
+            import clipboard
+            clipboard.set("\n".join(lines))
+            alert("Liste copiée", "La checklist de toutes les consoles est dans le presse-papiers.")
+        except Exception:
+            alert("Copie impossible", "La sauvegarde est dans Documents/collection_jeux.json.")
+
+
+# ====================================================================== grille d'une console
+class ConsoleScreen(Screen):
+    def __init__(self, app, nav, label):
+        super().__init__()
+        self.app, self.nav, self.label = app, nav, label
+        t = app.theme
+        self.title = FULL_NAME[label]
+        self.background_color = t["bg"]
+        self.filter_index = 0
+        self.sort_index = 0
+        self.quick = False          # mode « toucher = cocher »
+        self.query = ""
+        self.items = []             # [("h", texte) | ("g", jeu)]
+        self.frames = []
+        self.live = {}              # index -> vue affichée
+        self.layout_width = 0
+        self.bar_button = ("Trier : N°", lambda s: self.cycle_sort())
 
         self.search = ui.TextField()
-        self.search.placeholder = "Rechercher un jeu ou une série..."
+        self.search.placeholder = "Rechercher dans %s..." % FULL_NAME[label]
         self.search.clear_button_mode = "while_editing"
         self.search.autocorrection_type = False
         self.search.spellchecking_type = False
         self.search.background_color = t["field"]
         self.search.text_color = t["text"]
         self.search.border_width = 0
-        self.search.corner_radius = 8
+        self.search.corner_radius = 9
         self.search.delegate = self
         self.add_subview(self.search)
 
-        self.console_ctrl = self._segmented(LABELS, self.console_changed)
-        self.filter_ctrl = self._segmented(FILTERS, self.filter_changed)
-        self.mode_ctrl = self._segmented(["Mode : cocher", "Mode : infos & prix"],
-                                         self.mode_changed)
+        self.filter_ctrl = ui.SegmentedControl()
+        self.filter_ctrl.segments = FILTERS
+        self.filter_ctrl.selected_index = 0
+        self.filter_ctrl.action = self.filter_changed
+        self.add_subview(self.filter_ctrl)
 
-        self.stats = ui.Label()
-        self.stats.font = ("<System-Bold>", 13)
-        self.stats.text_color = t["text"]
-        self.add_subview(self.stats)
+        self.quick_ctrl = ui.SegmentedControl()
+        self.quick_ctrl.segments = ["Toucher : voir la fiche", "Toucher : cocher"]
+        self.quick_ctrl.selected_index = 0
+        self.quick_ctrl.action = self.quick_changed
+        self.add_subview(self.quick_ctrl)
 
-        self.status = ui.Label()
-        self.status.font = ("<System>", 11)
-        self.status.text_color = t["status"]
+        self.summary = make_label("", (0, 0, 10, 10), 13, True, t["text"])
+        self.add_subview(self.summary)
+        self.status = make_label("", (0, 0, 10, 10), 11, False, t["status"])
         self.add_subview(self.status)
 
-        self.table = ui.TableView()
-        self.table.data_source = self
-        self.table.delegate = self
-        self.table.row_height = 54
-        self.table.background_color = t["bg"]
-        self.add_subview(self.table)
+        self.scroll = ui.ScrollView()
+        self.scroll.delegate = self
+        self.scroll.always_bounce_vertical = True
+        self.add_subview(self.scroll)
 
-        self.bottom = ui.View()
-        self.bottom.background_color = t["bar"]
-        self.add_subview(self.bottom)
+    # ---------------------------------------------------------- cycle de vie
+    def on_show(self):
+        self.app.focus = self.label
+        self.app.wake.set()
+        self.status.text = self.app.status
+        self.rebuild()
 
-        self.buttons = []
-        for title, action in (("Exporter", self.export_list),
-                              ("Valeur console", self.value_console),
-                              ("Valeur totale", self.value_all)):
-            b = ui.Button(title=title)
-            b.background_color = t["accent"]
-            b.tint_color = "white"
-            b.corner_radius = 8
-            b.font = ("<System-Bold>", 13)
-            b.action = action
-            self.bottom.add_subview(b)
-            self.buttons.append(b)
+    def on_status(self, text):
+        self.status.text = text
 
-    def _segmented(self, segments, action):
-        c = ui.SegmentedControl()
-        c.segments = segments
-        c.selected_index = 0
-        c.action = action
-        self.add_subview(c)
-        return c
+    def on_data(self, label, game):
+        if label != self.label or self.hidden:
+            return
+        if self.sort_index in (1, 2) or self.filter_index:
+            self.later(self.rebuild, 1.0)  # l'ordre ou le filtre peut changer
+            return
+        self.update_summary()
+        self.redraw_game(game)
+
+    def on_cover(self, url):
+        if self.hidden:
+            return
+        for i, v in list(self.live.items()):
+            kind, game = self.items[i]
+            if kind == "g" and self.app.cover_url(self.label, game) == url:
+                self.redraw_index(i)
+
+    # ---------------------------------------------------------- contrôles
+    def textfield_did_change(self, tf):
+        self.query = tf.text or ""
+        self.rebuild()
+
+    def textfield_should_return(self, tf):
+        tf.end_editing()
+        return True
+
+    def filter_changed(self, sender):
+        self.filter_index = sender.selected_index
+        self.rebuild()
+
+    def quick_changed(self, sender):
+        self.quick = sender.selected_index == 1
+
+    def cycle_sort(self):
+        self.sort_index = (self.sort_index + 1) % len(SORTS)
+        self.bar_button = ("Trier : " + SORTS[self.sort_index], lambda s: self.cycle_sort())
+        self.nav._update_bar()
+        self.rebuild()
+
+    # ---------------------------------------------------------- données affichées
+    def update_summary(self):
+        got, total = self.app.coll.count(self.label), len(GAMES_BY[self.label])
+        value, known = self.app.console_value(self.label)
+        txt = "%d / %d obtenus" % (got, total)
+        if got:
+            txt += "   •   valeur %s" % eur(value)
+        self.summary.text = txt
+
+    def matching(self):
+        q = normalize(self.query.strip())
+        owned = self.app.coll.owned[self.label]
+        f = FILTERS[self.filter_index]
+        out = []
+        for g in GAMES_BY[self.label]:
+            if f == "Obtenus" and g not in owned:
+                continue
+            if f == "Manquants" and g in owned:
+                continue
+            if q and q not in normalize(g) and \
+                    q not in normalize(self.app.section_of[self.label].get(g, "")):
+                continue
+            out.append(g)
+        return out
+
+    def rebuild(self):
+        games = set(self.matching())
+        items = []
+        if self.sort_index == 0:  # ordre du catalogue, avec les titres de section
+            seen = set()
+            for section, sgames in SECTIONS_BY[self.label]:
+                shown = [g for g in sgames if g in games and g not in seen]
+                if not shown:
+                    continue
+                got = sum(1 for g in sgames if g in self.app.coll.owned[self.label])
+                items.append(("h", "%s  (%d/%d)" % (section, got, len(sgames))))
+                for g in shown:
+                    seen.add(g)
+                    items.append(("g", g))
+        else:
+            lst = [g for g in GAMES_BY[self.label] if g in games]
+            if self.sort_index == 1:
+                lst.sort(key=lambda g: -((self.app.price(self.label, g) or {}).get("mid") or -1))
+            elif self.sort_index == 2:
+                lst.sort(key=lambda g: -((self.app.price(self.label, g, "Disque seul") or {})
+                                         .get("mid") or -1))
+            else:
+                lst.sort(key=normalize)
+            items = [("g", g) for g in lst]
+        self.items = items
+        self.compute_frames()
+        self.update_summary()
+
+    def compute_frames(self):
+        w = self.scroll.width
+        if w < 50:
+            return
+        self.layout_width = w
+        pad = 10
+        cols = max(3, int((w - pad) // 125))
+        tw = (w - pad * (cols + 1)) / cols
+        th = tw * 1.42 + 52
+        self.tile_size = (tw, th)
+        frames, x_i, y = [], 0, pad
+        for kind, _ in self.items:
+            if kind == "h":
+                if x_i:
+                    y += th + pad
+                    x_i = 0
+                frames.append((pad, y, w - 2 * pad, 28))
+                y += 32
+            else:
+                frames.append((pad + x_i * (tw + pad), y, tw, th))
+                x_i += 1
+                if x_i == cols:
+                    x_i = 0
+                    y += th + pad
+        if x_i:
+            y += th + pad
+        if not self.items:
+            frames = []
+            y = 200
+        self.frames = frames
+        for v in self.live.values():
+            self.scroll.remove_subview(v)
+        self.live = {}
+        self.empty_label_visible(not self.items)
+        self.scroll.content_size = (w, y + pad)
+        off = self.scroll.content_offset[1]
+        if off > max(0, y - self.scroll.height):
+            self.scroll.content_offset = (0, 0)
+        self.render_visible()
+
+    def empty_label_visible(self, show):
+        if not hasattr(self, "empty"):
+            self.empty = make_label("Aucun jeu ne correspond.", (0, 60, 10, 30), 15, False,
+                                    self.app.theme["sub"], "center")
+            self.scroll.add_subview(self.empty)
+        self.empty.frame = (0, 60, self.scroll.width, 30)
+        self.empty.hidden = not show
+
+    def scrollview_did_scroll(self, sv):
+        self.render_visible()
+
+    def render_visible(self):
+        top = self.scroll.content_offset[1] - 400
+        bottom = self.scroll.content_offset[1] + self.scroll.height + 600
+        need = set(i for i, f in enumerate(self.frames) if f[1] + f[3] >= top and f[1] <= bottom)
+        for i in list(self.live):
+            if i not in need:
+                self.scroll.remove_subview(self.live.pop(i))
+        for i in sorted(need):
+            if i not in self.live:
+                self.live[i] = self.make_view(i)
+                self.scroll.add_subview(self.live[i])
+
+    def redraw_index(self, i):
+        if i in self.live:
+            self.scroll.remove_subview(self.live.pop(i))
+            self.live[i] = self.make_view(i)
+            self.scroll.add_subview(self.live[i])
+
+    def redraw_game(self, game):
+        for i, (kind, g) in enumerate(self.items):
+            if kind == "g" and g == game:
+                self.redraw_index(i)
+
+    def make_view(self, i):
+        kind, value = self.items[i]
+        frame = self.frames[i]
+        if kind == "h":
+            return make_label(value.upper(), frame, 12, True, self.app.theme["sub"])
+        return make_tile(self.app, self.label, value, frame, self.tapped)
+
+    def tapped(self, game):
+        if self.quick:
+            now = self.app.toggle(self.label, game)
+            hud(("✓ " if now else "✗ ") + game, "success", 0.5)
+            if self.filter_index:
+                self.rebuild()
+            return
+        self.nav.push(DetailScreen(self.app, self.nav, self.label, game))
 
     def layout(self):
         w, h = self.width, self.height
         y = 8
         self.search.frame = (10, y, w - 20, 34)
         y += 40
-        for ctrl in (self.console_ctrl, self.filter_ctrl, self.mode_ctrl):
-            ctrl.frame = (10, y, w - 20, 30)
-            y += 36
-        self.stats.frame = (12, y, w - 24, 18)
+        self.filter_ctrl.frame = (10, y, w - 20, 30)
+        y += 36
+        self.quick_ctrl.frame = (10, y, w - 20, 30)
+        y += 36
+        self.summary.frame = (12, y, w - 24, 18)
         y += 18
         self.status.frame = (12, y, w - 24, 16)
-        y += 20
-        bar_h = 60  # un peu de marge pour la barre d'accueil de l'iPhone
-        self.table.frame = (0, y, w, max(0, h - y - bar_h))
-        self.bottom.frame = (0, h - bar_h, w, bar_h)
-        bw = (w - 40) / 3.0
-        for i, b in enumerate(self.buttons):
-            b.frame = (10 + i * (bw + 10), 8, bw, 36)
+        y += 18
+        self.scroll.frame = (0, y, w, max(0, h - y))
+        if abs(self.layout_width - w) > 1:
+            self.compute_frames()
 
-    def will_close(self):
-        self.closed = True
-        self.wake.set()
-        self.prices.save()
 
-    # -------------------------------------------------------------- état / affichage
-    def set_status(self, text):
-        def _set():
-            self.status.text = text
-        ui.delay(_set, 0)
+def make_tile(app, label, game, frame, on_tap):
+    """Une case du « Pokédex » : jaquette (grise si pas obtenu), n°, nom, prix, rareté."""
+    t = app.theme
+    x, y, w, h = frame
+    owned = app.coll.is_owned(label, game)
+    rar = app.rarity(label, game)
+    price = app.price(label, game)
+    tile = ui.View(frame=frame, background_color=t["card"])
+    tile.corner_radius = 10
+    tile.border_width = 2 if owned else 0.5
+    tile.border_color = (rar[3] if rar else t["owned"]) if owned else t["line"]
 
-    def update_stats(self):
-        here = self.coll.count(self.label)
-        total_here = len(GAMES_BY[self.label])
-        owned_all = sum(self.coll.count(l) for l in LABELS)
-        total_all = sum(len(GAMES_BY[l]) for l in LABELS)
-        self.stats.text = "%s : %d/%d   •   Toutes consoles : %d/%d" % (
-            self.label, here, total_here, owned_all, total_all)
+    cover_h = h - 52
+    url = app.cover_url(label, game)
+    path = app.covers.local(url, grey=not owned) if url else None
+    dim = False
+    if not path and url and not owned:  # pas de version grise : couleur atténuée
+        path, dim = app.covers.local(url), True
+    img = load_image(path)
+    if img:
+        iv = ui.ImageView(frame=(5, 5, w - 10, cover_h - 5))
+        iv.content_mode = ui.CONTENT_SCALE_ASPECT_FIT
+        iv.image = img
+        if not owned:
+            iv.alpha = 0.35 if dim else 0.55
+        tile.add_subview(iv)
+    else:
+        ph = ui.View(frame=(5, 5, w - 10, cover_h - 5), background_color=t["placeholder"])
+        ph.corner_radius = 6
+        loading = app.loading == (label, game)
+        ph.add_subview(make_label("…" if loading or not app.error_of(label, game) else "?",
+                                  (0, (cover_h - 5) / 2 - 20, w - 10, 40), 30, True,
+                                  t["sub"], "center"))
+        tile.add_subview(ph)
 
-    def pending_count(self):
-        n = 0
-        for l in LABELS:
-            for g in self.coll.owned_games(l):
-                if self.coll.manual_price(l, g) is None and \
-                        not self.prices.has_price(self.prices.get(key_of(l, g))):
-                    n += 1
-        return n
+    num = make_label("#%03d" % app.number[label][game], (8, 8, 44, 16), 10, True, "white",
+                     "center")
+    num.background_color = (0, 0, 0, 0.55)
+    num.corner_radius = 5
+    tile.add_subview(num)
+    if owned:
+        ok = make_label("✓", (w - 30, 8, 22, 22), 14, True, "white", "center")
+        ok.background_color = t["owned"]
+        ok.corner_radius = 11
+        tile.add_subview(ok)
 
-    def default_status(self):
-        mins = NET.blocked_minutes()
-        if mins:
-            return "PriceCharting en pause encore %d min (« Saisir mon prix » possible)" % mins
-        if self.loading:
-            return "Chargement du prix : %s" % self.loading
-        if self.mode == MODE_INFO:
-            return "Touche un jeu pour voir son prix détaillé"
-        return "Touche un jeu pour le cocher / décocher"
+    tile.add_subview(make_label(game, (5, cover_h + 2, w - 10, 30), 11, owned,
+                                t["text"] if owned else t["sub"], "center", 2))
+    if price:
+        ptxt = ("✎ " if price.get("manual") else "") + eur_short(price["mid"])
+    elif app.error_of(label, game):
+        ptxt = "prix ?"
+    else:
+        ptxt = "…"
+    tile.add_subview(make_label(ptxt, (6, h - 19, w / 2, 15), 11, True, t["text"]))
+    if rar:
+        tile.add_subview(make_label("★" * rar[2], (w / 2 - 6, h - 19, w / 2, 15), 10, False,
+                                    rar[3], "right"))
+    b = ui.Button(frame=(0, 0, w, h))
+    b.action = lambda s: on_tap(game)
+    tile.add_subview(b)
+    return tile
 
-    def refresh(self):
-        owned = self.coll.owned[self.label]
-        query = normalize(self.query.strip())
-        flt = FILTERS[self.filter_index]
-        rows = []
-        for section, games in SECTIONS_BY[self.label]:
-            section_hit = bool(query) and query in normalize(section)
-            shown = []
-            for game in games:
-                is_owned = game in owned
-                if flt == "À acheter" and is_owned:
-                    continue
-                if flt == "Possédés" and not is_owned:
-                    continue
-                if query and not section_hit and query not in normalize(game):
-                    continue
-                shown.append(game)
-            if shown:
-                got = sum(1 for g in games if g in owned)
-                rows.append((section, shown, got, len(games)))
-        self.rows = rows
-        self.update_stats()
-        self.status.text = self.default_status()
-        self.table.reload()
-        self.wake.set()
 
-    def reload_soon(self):
-        """Recharge la liste au plus toutes les 1,5 s (pendant les chargements de prix)."""
-        if time.time() - self.last_reload > 1.5:
-            self.last_reload = time.time()
-            on_main(self.table.reload)
+# ====================================================================== fiche d'un jeu
+class DetailScreen(Screen):
+    def __init__(self, app, nav, label, game):
+        super().__init__()
+        self.app, self.nav, self.label, self.game = app, nav, label, game
+        self.title = "#%03d  %s" % (app.number[label][game], label)
+        self.background_color = app.theme["bg"]
+        self.scroll = ui.ScrollView()
+        self.scroll.always_bounce_vertical = True
+        self.add_subview(self.scroll)
 
-    def save_collection(self):
-        err = self.coll.save()
-        if err:
-            hud("Erreur de sauvegarde : %s" % err, "error", 2.5)
+    def on_show(self):
+        e = self.app.prices.get(key_of(self.label, self.game)) or {}
+        if not self.app.prices.is_fresh(key_of(self.label, self.game)) or e.get("partial"):
+            self.app.priority = (self.label, self.game)  # ventes détaillées en priorité
+            self.app.wake.set()
+        self.build()
 
-    def price_line(self, label, game):
-        cond = self.coll.condition(label, game)
-        manual = self.coll.manual_price(label, game)
+    def on_hide(self):
+        if self.app.priority == (self.label, self.game):
+            self.app.priority = None
+
+    def on_data(self, label, game):
+        if label == self.label and game == self.game and not self.hidden:
+            self.build()
+
+    def on_cover(self, url):
+        if url == self.app.cover_url(self.label, self.game) and not self.hidden:
+            self.build()
+
+    def layout(self):
+        self.scroll.frame = (0, 0, self.width, self.height)
+        self.build()
+
+    def build(self):
+        app, t, label, game = self.app, self.app.theme, self.label, self.game
+        sv = self.scroll
+        for v in list(sv.subviews):
+            sv.remove_subview(v)
+        w = self.width
+        if w < 50:
+            return
+        pad = 16
+        y = pad
+        owned = app.coll.is_owned(label, game)
+        rar = app.rarity(label, game)
+        e = app.prices.get(key_of(label, game)) or {}
+
+        # --- jaquette
+        ch = min(300, w * 0.75)
+        url = app.cover_url(label, game)
+        img = load_image(app.covers.local(url)) if url else None
+        if img:
+            iv = ui.ImageView(frame=(pad, y, w - 2 * pad, ch))
+            iv.content_mode = ui.CONTENT_SCALE_ASPECT_FIT
+            iv.image = img
+            sv.add_subview(iv)
+        else:
+            ph = ui.View(frame=((w - ch * 0.7) / 2, y, ch * 0.7, ch),
+                         background_color=t["placeholder"])
+            ph.corner_radius = 10
+            ph.add_subview(make_label("Jaquette en cours de chargement" if not app.error_of(
+                label, game) else "Pas de jaquette", (8, ch / 2 - 20, ch * 0.7 - 16, 40),
+                13, False, t["sub"], "center", 2))
+            sv.add_subview(ph)
+        y += ch + 12
+
+        # --- titre
+        sv.add_subview(make_label(game, (pad, y, w - 2 * pad, 52), 20, True, t["text"],
+                                  "center", 2))
+        y += 54
+        sv.add_subview(make_label("%s  •  %s" % (FULL_NAME[label], app.section_of[label][game]),
+                                  (pad, y, w - 2 * pad, 18), 12, False, t["sub"], "center"))
+        y += 24
+        if rar:
+            chip = make_label("%s  %s" % (stars(rar[2]), rar[1]), (w / 2 - 90, y, 180, 26), 13,
+                              True, "white", "center")
+            chip.background_color = rar[3]
+            chip.corner_radius = 13
+            sv.add_subview(chip)
+            y += 34
+
+        # --- je l'ai
+        sv.add_subview(make_button("✓ Dans ma collection" if owned
+                                   else "+ Je l'ai !", (pad, y, w - 2 * pad, 46),
+                                   lambda s: self.toggle(),
+                                   t["owned"] if owned else t["accent"], size=16))
+        y += 50
+        sv.add_subview(make_label("Toucher pour retirer de la collection" if owned else
+                                  "Toucher pour l'ajouter à ta collection",
+                                  (pad, y, w - 2 * pad, 14), 11, False, t["sub"], "center"))
+        y += 22
+
+        # --- condition
+        sv.add_subview(make_label("Condition de mon exemplaire", (pad, y, w, 16), 12, False,
+                                  t["sub"]))
+        y += 18
+        seg = ui.SegmentedControl(frame=(pad, y, w - 2 * pad, 32))
+        seg.segments = list(COND)
+        seg.selected_index = list(COND).index(app.coll.condition(label, game))
+        seg.action = self.cond_changed
+        sv.add_subview(seg)
+        y += 44
+
+        # --- prix
+        card = ui.View(frame=(pad, y, w - 2 * pad, 10), background_color=t["card"])
+        card.corner_radius = 12
+        cy = 12
+        cw = w - 2 * pad
+        manual = app.coll.manual_price(label, game)
+        fx = app.prices.fx_quick()
+        cur = app.coll.condition(label, game)
         if manual is not None:
-            return "Mon prix : %s" % eur(manual)
-        e = self.prices.get(key_of(label, game))
+            card.add_subview(make_label("Mon prix : %s" % eur(manual), (14, cy, cw - 28, 24), 18,
+                                        True, t["text"]))
+            cy += 28
         if PriceCache.has_price(e):
-            est = estimate(e, cond, self.prices.fx_quick())
-            if not est:
-                return "%s : pas de cote pour cette condition" % cond
-            if est["max"] - est["min"] >= 1:
-                return "%s : ≈ %s  (ventes %s – %s)" % (
-                    cond, eur(est["mid"]), eur_short(est["min"]), eur_short(est["max"]))
-            return "%s : ≈ %s" % (cond, eur(est["mid"]))
-        if self.loading == game and self.loading_label == label:
-            return "Chargement du prix..."
-        if self.mode != MODE_INFO and not self.coll.is_owned(label, game):
-            return ""
-        if e and e.get("v") == CACHE_VERSION and "err" in e:
-            return "Prix indisponible : %s" % e["err"][:60]
-        mins = NET.blocked_minutes()
-        if mins:
-            return "Site en pause (%d min) – « Saisir mon prix » possible" % mins
-        return "Prix en attente de chargement"
+            for c in COND:
+                est = estimate(e, c, fx)
+                bold = c == cur
+                color = t["text"] if bold else t["sub"]
+                size = 16 if bold else 14
+                card.add_subview(make_label(("▶ " if bold else "") + c, (14, cy, cw * 0.6, 22),
+                                            size, bold, color))
+                card.add_subview(make_label(eur(est["mid"]) if est else "—",
+                                            (cw * 0.5, cy, cw * 0.5 - 14, 22), size, bold, color,
+                                            "right"))
+                cy += 22
+                if est and est["n"] >= 3:
+                    card.add_subview(make_label(
+                        "ventes récentes : %s – %s  (%s)" % (
+                            eur_short(est["min"]), eur_short(est["max"]),
+                            plural(est["n"], "vente")),
+                        (14, cy, cw - 28, 16), 11, False, t["sub"]))
+                    cy += 18
+                cy += 6
+            info = "Fiche PriceCharting : %s" % (e.get("title") or "?")
+            if e.get("region") == "US":
+                info += " (version US : jeu non sorti en Europe)"
+            if e.get("partial"):
+                info += "\nVentes détaillées en cours de chargement..."
+            else:
+                info += "\nMis à jour le %s" % time.strftime("%d/%m/%Y", time.localtime(e["ts"]))
+            card.add_subview(make_label(info, (14, cy + 4, cw - 28, 48), 11, False, t["sub"],
+                                        lines=3))
+            cy += 56
+        else:
+            err = app.error_of(label, game)
+            card.add_subview(make_label(("Prix indisponible : " + err) if err else
+                                        "Chargement du prix...", (14, cy, cw - 28, 48), 13,
+                                        False, t["sub"], lines=3))
+            cy += 52
+        card.frame = (pad, y, cw, cy + 6)
+        sv.add_subview(card)
+        y += cy + 18
 
-    # -------------------------------------------------------------- chargement automatique
-    def next_job(self):
-        """Prochain jeu à chiffrer : d'abord ceux affichés en mode infos, puis les possédés."""
-        candidates = []
-        if self.mode == MODE_INFO:
-            candidates += [(self.label, g) for _, games, _, _ in self.rows for g in games]
-        candidates += [(self.label, g) for g in self.coll.owned_games(self.label)]
-        for l in LABELS:
-            candidates += [(l, g) for g in self.coll.owned_games(l)]
-        for l, g in candidates:
-            if self.coll.manual_price(l, g) is None and \
-                    self.prices.needs_fetch(key_of(l, g)):
-                return l, g
-        return None
-
-    def price_worker(self):
-        time.sleep(1.0)
-        fx_done = False
-        while not self.closed:
-            if NET.blocked_minutes():
-                self.set_status(self.default_status())
-                self.wake.wait(60)
-                self.wake.clear()
-                continue
-            job = self.next_job()
-            if not job:
-                self.wake.wait(30)
-                self.wake.clear()
-                continue
-            if not fx_done:
-                self.prices.get_fx()
-                fx_done = True
-            label, game = job
-            key = key_of(label, game)
-            self.loading, self.loading_label = game, label
-            self.set_status("Chargement du prix (%s) : %s" % (label, game))
-            self.reload_soon()
-            try:
-                self.prices.put(key, fetch_prices(
-                    label, game, fixed_url=self.coll.fixed_url(label, game),
-                    known_url=self.prices.known_url(key), token=read_token()))
-            except Exception as ex:
-                self.prices.record_error(key, str(ex))
-            self.loading = self.loading_label = None
-            self.prices.save()
-            self.reload_soon()
-            if not self.next_job():
-                self.set_status("Tous les prix sont à jour (%s)" % NET.mode_text())
-                on_main(self.table.reload)
-
-    # -------------------------------------------------------------- contrôles
-    def console_changed(self, sender):
-        self.label = LABELS[sender.selected_index]
-        self.refresh()
-        self.table.content_offset = (0, 0)
-
-    def filter_changed(self, sender):
-        self.filter_index = sender.selected_index
-        self.refresh()
-
-    def mode_changed(self, sender):
-        self.mode = sender.selected_index
-        self.refresh()
-
-    def textfield_did_change(self, textfield):
-        self.query = textfield.text or ""
-        self.refresh()
-
-    def textfield_should_return(self, textfield):
-        textfield.end_editing()
-        return True
-
-    # -------------------------------------------------------------- table
-    def tableview_number_of_sections(self, tableview):
-        return len(self.rows)
-
-    def tableview_number_of_rows(self, tableview, section):
-        if section >= len(self.rows):
-            return 0
-        return len(self.rows[section][1])
-
-    def tableview_title_for_header(self, tableview, section):
-        if section >= len(self.rows):
-            return ""
-        name, _, got, total = self.rows[section]
-        return "%s  (%d/%d)" % (name, got, total)
-
-    def tableview_cell_for_row(self, tableview, section, row):
-        t = self.theme
-        cell = ui.TableViewCell("subtitle")
-        cell.background_color = t["bg"]
-        try:
-            game = self.rows[section][1][row]
-        except IndexError:
-            return cell
-        owned = self.coll.is_owned(self.label, game)
-        cell.text_label.text = game
-        cell.text_label.font = ("<System>", 14)
-        cell.text_label.number_of_lines = 1
-        cell.text_label.text_color = t["owned"] if owned else t["text"]
-        cell.detail_text_label.text = self.price_line(self.label, game)
-        cell.detail_text_label.font = ("<System>", 12)
-        cell.detail_text_label.text_color = t["sub"]
-        cell.accessory_type = "checkmark" if owned else "none"
-        cell.selection_style = "none"
-        return cell
-
-    def tableview_did_select(self, tableview, section, row):
-        try:
-            game = self.rows[section][1][row]
-        except IndexError:
-            return
-        if self.mode == MODE_INFO:
-            self.show_actions(self.label, game)
-            return
-        self.coll.toggle(self.label, game)
-        self.save_collection()
-        self.refresh()
-
-    # -------------------------------------------------------------- menu d'un jeu
-    @ui.in_background
-    def show_actions(self, label, game):
-        import dialogs
-        cur = self.coll.condition(label, game)
-        owned = self.coll.is_owned(label, game)
-        has_manual = self.coll.manual_price(label, game) is not None
-
+        # --- actions
         actions = [
-            ("Voir le prix détaillé", lambda: run_thread(self.show_price, label, game)),
-            ("Décocher (je ne l'ai plus)" if owned else "Cocher (je l'ai)",
-             lambda: self.toggle_from_menu(label, game)),
-            ("Saisir mon prix (€)", lambda: self.ask_manual(label, game)),
+            ("Saisir mon prix", self.ask_manual),
+            ("Effacer mon prix" if manual is not None else "Recharger le prix",
+             self.clear_manual if manual is not None else self.reload),
+            ("eBay (vendus)", self.open_ebay),
+            ("Leboncoin", self.open_lbc),
+            ("PriceCharting", self.open_pc),
+            ("Corriger la fiche", self.fix_url),
+            ("Copier le nom", self.copy_name),
+            ("Clé API (option)", self.ask_token),
         ]
-        if has_manual:
-            actions.append(("Effacer mon prix", lambda: self.clear_manual(label, game)))
-        for c in COND:
-            actions.append((("✓ " if c == cur else "    ") + "Condition : " + c,
-                            (lambda c=c: self.change_condition(label, game, c))))
-        q = search_name(game)
-        actions += [
-            ("Corriger la fiche PriceCharting", lambda: self.fix_url(label, game)),
-            ("Recharger le prix", lambda: self.reload_price(label, game)),
-            ("Copier le nom", lambda: self.copy_name(game)),
-            ("Ouvrir PriceCharting", lambda: webbrowser.open(
-                self.prices.known_url(key_of(label, game)) or search_url(label, game))),
-            ("eBay.fr : ventes réalisées", lambda: webbrowser.open(
-                "https://www.ebay.fr/sch/i.html?LH_Sold=1&LH_Complete=1&_nkw="
-                + quote_plus("%s %s PAL" % (q, FULL_NAME[label])))),
-            ("Leboncoin", lambda: webbrowser.open(
-                "https://www.leboncoin.fr/recherche?text="
-                + quote_plus("%s %s" % (q, FULL_NAME[label])))),
-            ("Clé API PriceCharting (facultatif)", self.ask_token),
-        ]
-        choice = dialogs.list_dialog(game, [a[0] for a in actions])
-        if not choice:
-            return
-        dict(actions)[choice]()
+        bw = (w - 2 * pad - 10) / 2
+        for i, (title, fn) in enumerate(actions):
+            x = pad + (i % 2) * (bw + 10)
+            sv.add_subview(make_button(title, (x, y, bw, 40), (lambda s, fn=fn: fn()),
+                                       t["card"], t["accent"], 13))
+            if i % 2:
+                y += 48
+        y += pad
+        sv.content_size = (w, y)
 
-    def toggle_from_menu(self, label, game):
-        now_owned = self.coll.toggle(label, game)
-        self.save_collection()
-        on_main(self.refresh)
-        hud("Coché" if now_owned else "Décoché", "success", 0.8)
+    # ---------------------------------------------------------- actions
+    def toggle(self):
+        now = self.app.toggle(self.label, self.game)
+        hud("Ajouté à la collection" if now else "Retiré de la collection", "success", 0.7)
 
-    def copy_name(self, game):
-        import clipboard
-        clipboard.set(game)
-        hud("Nom copié", "success", 0.8)
+    def cond_changed(self, sender):
+        self.app.coll.set_condition(self.label, self.game, list(COND)[sender.selected_index])
+        self.app.save()
+        self.app.notify(self.label, self.game)
 
-    def ask_manual(self, label, game):
-        cur = self.coll.manual_price(label, game)
+    @ui.in_background
+    def ask_manual(self):
+        cur = self.app.coll.manual_price(self.label, self.game)
         try:
-            txt = console.input_alert(game, "Prix en euros (ex : 12,50)",
+            txt = console.input_alert(self.game, "Prix en euros (ex : 12,50)",
                                       ("%.2f" % cur).replace(".", ",") if cur is not None else "",
                                       "Enregistrer")
         except KeyboardInterrupt:
@@ -1566,38 +2413,48 @@ class GameChecklist(ui.View):
         except ValueError:
             alert("Prix invalide", "Écris un nombre positif, par exemple 12,50.")
             return
-        self.coll.set_manual(label, game, value)
-        self.save_collection()
-        on_main(self.table.reload)
+        self.app.coll.set_manual(self.label, self.game, value)
+        self.app.save()
+        self.app.notify(self.label, self.game)
         hud("Prix enregistré", "success", 0.8)
 
-    def clear_manual(self, label, game):
-        self.coll.set_manual(label, game, None)
-        self.save_collection()
-        on_main(self.refresh)
-        hud("Prix effacé", "success", 0.8)
+    def clear_manual(self):
+        self.app.coll.set_manual(self.label, self.game, None)
+        self.app.save()
+        self.app.notify(self.label, self.game)
 
-    def change_condition(self, label, game, cond):
-        self.coll.set_condition(label, game, cond)
-        self.save_collection()
-        on_main(self.table.reload)
-        hud("Condition : " + cond, "success", 0.8)
-
-    def reload_price(self, label, game):
-        self.prices.forget(key_of(label, game))
-        on_main(self.refresh)
+    def reload(self):
+        self.app.refetch(self.label, self.game, full=True)
         hud("Prix redemandé", "success", 0.8)
 
-    def fix_url(self, label, game):
-        e = self.prices.get(key_of(label, game)) or {}
-        found = e.get("title") or "aucun"
+    def open_ebay(self):
+        q = "%s %s PAL" % (search_name(self.game), FULL_NAME[self.label])
+        webbrowser.open("https://www.ebay.fr/sch/i.html?LH_Sold=1&LH_Complete=1&_nkw="
+                        + quote_plus(q))
+
+    def open_lbc(self):
+        q = "%s %s" % (search_name(self.game), FULL_NAME[self.label])
+        webbrowser.open("https://www.leboncoin.fr/recherche?text=" + quote_plus(q))
+
+    def open_pc(self):
+        webbrowser.open(self.app.prices.known_url(key_of(self.label, self.game))
+                        or search_url(self.label, self.game))
+
+    def copy_name(self):
+        import clipboard
+        clipboard.set(self.game)
+        hud("Nom copié", "success", 0.8)
+
+    @ui.in_background
+    def fix_url(self):
+        e = self.app.prices.get(key_of(self.label, self.game)) or {}
         try:
             txt = console.input_alert(
                 "Corriger la fiche",
-                "Jeu trouvé : %s\n\nOuvre « Ouvrir PriceCharting », trouve le bon jeu "
-                "(version PAL), copie le lien de sa page puis colle-le ici. "
-                "Laisse vide pour revenir à la recherche automatique." % found,
-                self.coll.fixed_url(label, game) or "", "Enregistrer")
+                "Jeu trouvé : %s\n\nTouche « PriceCharting », trouve le bon jeu (version "
+                "PAL), copie le lien de sa page et colle-le ici. Laisse vide pour revenir "
+                "à la recherche automatique." % (e.get("title") or "aucun"),
+                self.app.coll.fixed_url(self.label, self.game) or "", "Enregistrer")
         except KeyboardInterrupt:
             return
         txt = (txt or "").strip()
@@ -1606,220 +2463,137 @@ class GameChecklist(ui.View):
             alert("Lien invalide", "Le lien doit ressembler à :\n"
                   "https://www.pricecharting.com/game/pal-playstation-2/god-of-war")
             return
-        self.coll.set_fixed_url(label, game, BASE + m.group(1) if m else None)
-        self.save_collection()
-        self.prices.forget(key_of(label, game))
-        on_main(self.refresh)
+        self.app.coll.set_fixed_url(self.label, self.game, BASE + m.group(1) if m else None)
+        self.app.save()
+        self.app.refetch(self.label, self.game, full=True)
         hud("Fiche enregistrée" if m else "Recherche automatique", "success", 0.8)
 
+    @ui.in_background
     def ask_token(self):
         try:
             txt = console.input_alert(
                 "Clé API PriceCharting",
-                "Facultatif : les prix fonctionnent sans clé. Clé de ton abonnement "
-                "PriceCharting (page Subscription). Laisse vide pour la supprimer.",
-                self.token or "", "Enregistrer")
+                "Facultatif : tout fonctionne sans clé. Clé de ton abonnement PriceCharting "
+                "(page Subscription). Laisse vide pour la supprimer.",
+                read_token() or "", "Enregistrer")
         except KeyboardInterrupt:
             return
         txt = (txt or "").strip()
         try:
             write_token(txt)
-        except OSError as e:
-            alert("Erreur", str(e))
+        except OSError as ex:
+            alert("Erreur", str(ex))
             return
-        self.token = txt or None
         hud("Clé enregistrée" if txt else "Clé supprimée", "success", 0.8)
-        on_main(self.refresh)
 
-    # -------------------------------------------------------------- prix détaillé d'un jeu
-    def show_price(self, label, game):
-        key = key_of(label, game)
-        e = self.prices.get(key)
-        need = not self.prices.is_fresh(key) or (e or {}).get("partial")
-        if need and not read_token():
-            hud("Chargement des ventes...", "success", 1.0)
-            try:
-                e = fetch_prices(label, game, fixed_url=self.coll.fixed_url(label, game),
-                                 known_url=self.prices.known_url(key), full=True)
-                self.prices.put(key, e)
-                self.prices.save()
-            except Exception as ex:
-                self.prices.record_error(key, str(ex))
-                self.prices.save()
-                old = self.prices.get(key)
-                if not self.prices.has_price(old):
-                    on_main(self.table.reload)
-                    alert("Prix indisponible", "%s\n\n%s" % (game, ex))
-                    return
-                e = old
-        elif need:
-            try:
-                e = fetch_prices(label, game, fixed_url=self.coll.fixed_url(label, game),
-                                 token=read_token())
-                self.prices.put(key, e)
-                self.prices.save()
-            except Exception as ex:
-                alert("Prix indisponible", "%s\n\n%s" % (game, ex))
-                return
-        on_main(self.table.reload)
-        fx, note = self.prices.get_fx()
-        cur = self.coll.condition(label, game)
-        lines = ["Fiche : %s (%s)" % (e.get("title") or "?", PC[label][1]),
-                 "Mis à jour le %s" % time.strftime("%d/%m/%Y", time.localtime(e.get("ts", 0))),
-                 "Taux USD→EUR : %s (%s)" % (("%.4f" % fx).replace(".", ","), note), ""]
-        for c in COND:
-            est = estimate(e, c, fx)
-            mark = "▶ " if c == cur else ""
-            if not est:
-                lines.append("%s%s : pas de donnée" % (mark, c))
-            elif est["n"] >= 3:
-                lines.append("%s%s : ≈ %s\n   ventes récentes : %s – %s (%s)" % (
-                    mark, c, eur(est["mid"]), eur(est["min"]), eur(est["max"]),
-                    plural(est["n"], "vente")))
-            else:
-                lines.append("%s%s : ≈ %s" % (mark, c, eur(est["mid"])))
-        manual = self.coll.manual_price(label, game)
-        if manual is not None:
-            lines += ["", "Mon prix (utilisé pour la valeur) : %s" % eur(manual)]
-        if e.get("err"):
-            lines += ["", "Dernière mise à jour échouée : %s" % e["err"]]
-        lines += ["", "Pas le bon jeu ? Menu > « Corriger la fiche PriceCharting ».",
-                  e.get("url", "")]
-        alert(game, "\n".join(lines))
 
-    # -------------------------------------------------------------- valeur de la collection
-    def value_console(self, sender):
-        self.compute_value(self.label)
+# ====================================================================== rapport de valeur
+def compute_value(app, only):
+    if app.busy:
+        hud("Calcul déjà en cours...", "error", 1.0)
+        return
 
-    def value_all(self, sender):
-        self.compute_value(None)
-
-    def compute_value(self, only):
-        if self.busy:
-            hud("Calcul déjà en cours...", "error", 1.0)
-            return
-        self.busy = True
-        run_thread(self._compute_value, only)
-
-    def _compute_value(self, only):
+    def work():
+        app.busy = True
         try:
             labels = [only] if only else list(LABELS)
-            if not any(self.coll.owned_games(l) for l in labels):
-                alert("Collection vide", "Coche d'abord des jeux possédés.")
+            if not any(app.coll.owned_games(l) for l in labels):
+                alert("Collection vide", "Ajoute d'abord des jeux à ta collection.")
                 return
-            report = self.build_report(labels)
-            on_main(self.show_text, "Valeur de la collection", report)
+            report = build_report(app, labels)
+            on_main(show_text, app, "Valeur de la collection", report)
         except Exception as ex:
             alert("Erreur pendant le calcul", str(ex))
         finally:
-            self.busy = False
+            app.busy = False
+    run_thread(work)
 
-    def build_report(self, labels):
-        fx, note = self.prices.get_fx()
-        keys = ("min", "mid", "max")
-        total = dict.fromkeys(keys, 0.0)
-        lines, rows, missing = [], [], []
-        n_ok = 0
-        for l in labels:
-            sub = dict.fromkeys(keys, 0.0)
-            block = []
-            for g in self.coll.owned_games(l):
-                cond = self.coll.condition(l, g)
-                e = self.prices.get(key_of(l, g))
-                manual = self.coll.manual_price(l, g)
-                if manual is not None:
-                    est = {"min": manual, "max": manual, "mid": manual, "n": 0, "manual": True}
-                    cond_txt = "mon prix"
+
+def build_report(app, labels):
+    fx, note = app.prices.get_fx()
+    keys = ("min", "mid", "max")
+    total = dict.fromkeys(keys, 0.0)
+    lines, rows, missing = [], [], []
+    n_ok = 0
+    for l in labels:
+        sub = dict.fromkeys(keys, 0.0)
+        block = []
+        for g in app.coll.owned_games(l):
+            cond = app.coll.condition(l, g)
+            e = app.entry(l, g)
+            manual = app.coll.manual_price(l, g)
+            if manual is not None:
+                est = {"min": manual, "max": manual, "mid": manual, "n": 0, "manual": True}
+                cond_txt = "mon prix"
+            else:
+                est = estimate(e, cond, fx) if e else None
+                cond_txt = cond
+            if not est:
+                if e:
+                    why = "pas de cote pour cette condition"
                 else:
-                    est = estimate(e, cond, fx) if self.prices.has_price(e) else None
-                    cond_txt = cond
-                if not est:
-                    if self.prices.has_price(e):
-                        why = "pas de cote pour cette condition"
-                    elif e and e.get("err"):
-                        why = e["err"]
-                    else:
-                        why = "prix en cours de chargement, réessaie dans quelques minutes"
-                    missing.append("• %s – %s [%s] : %s" % (l, g, cond, why))
-                    continue
-                n_ok += 1
-                for k in keys:
-                    sub[k] += est[k]
-                    total[k] += est[k]
-                if abs(est["max"] - est["min"]) >= 1:
-                    detail = "%s  (ventes %s – %s)" % (eur(est["mid"]), eur_short(est["min"]),
-                                                       eur_short(est["max"]))
-                else:
-                    detail = eur(est["mid"])
-                block.append("• %s [%s] : %s" % (g, cond_txt, detail))
-                rows.append([l, g, cond_txt, round(est["mid"], 2), round(est["min"], 2),
-                             round(est["max"], 2), (e or {}).get("title", "") if not est["manual"] else "",
-                             (e or {}).get("url", "") if not est["manual"] else ""])
-            if block:
-                lines.append("=== %s : %s ===" % (FULL_NAME[l], eur(sub["mid"])))
-                lines += block + [""]
-
-        head = ["VALEUR DE LA COLLECTION (versions PAL)",
-                time.strftime("Calculé le %d/%m/%Y à %H:%M"),
-                "Source : PriceCharting + mes prix  •  USD→EUR %s (%s)"
-                % (("%.4f" % fx).replace(".", ","), note), "",
-                "VALEUR ESTIMÉE : %s" % eur(total["mid"]),
-                "Fourchette : %s – %s" % (eur(total["min"]), eur(total["max"])),
-                "%s, %d sans prix" % (
-                    plural(n_ok, "jeu valorisé").replace("jeu valorisés", "jeux valorisés"),
-                    len(missing)), ""]
-        if missing:
-            lines += ["=== SANS PRIX (non comptés) ==="] + missing + [""]
-
-        csv_note = "CSV : Documents/valeur_collection.csv"
-        try:
-            with open(CSV_FILE, "w", encoding="utf-8-sig", newline="") as f:
-                w = csv.writer(f, delimiter=";")  # « ; » : s'ouvre directement dans Excel/Numbers FR
-                w.writerow(["console", "jeu", "condition", "prix_eur", "bas_eur", "haut_eur",
-                            "fiche_pricecharting", "url"])
-                for r in rows:
-                    w.writerow([str(x).replace(".", ",") if isinstance(x, float) else x
-                                for x in r])
-        except OSError as e:
-            csv_note = "CSV non écrit : %s" % e
-        return "\n".join(head + lines + [csv_note])
-
-    def show_text(self, title, text):
-        tv = ui.TextView()
-        tv.name = title
-        tv.editable = False
-        tv.font = ("<System>", 12)
-        tv.background_color = self.theme["bg"]
-        tv.text_color = self.theme["text"]
-        tv.text = text
-        tv.present("sheet")
-
-    # -------------------------------------------------------------- export
-    @ui.in_background
-    def export_list(self, sender):
-        label = self.label
-        owned = self.coll.owned[label]
-        lines = ["MA COLLECTION %s (%d/%d)" % (FULL_NAME[label].upper(),
-                                               self.coll.count(label), len(GAMES_BY[label])), ""]
-        for section, games in SECTIONS_BY[label]:
-            lines.append(section)
-            for game in games:
-                lines.append("%s %s" % ("[x]" if game in owned else "[ ]", game))
-            lines.append("")
-        text = "\n".join(lines)
-        try:
-            import clipboard
-            clipboard.set(text)
-            alert("Liste copiée",
-                  "La liste %s a été copiée dans le presse-papiers." % FULL_NAME[label])
-        except Exception:
-            alert("Liste prête",
-                  "Copie impossible. La sauvegarde est dans Documents/collection_jeux.json.")
+                    why = app.error_of(l, g) or "prix en cours de chargement, réessaie bientôt"
+                missing.append("• %s – %s [%s] : %s" % (l, g, cond, why))
+                continue
+            n_ok += 1
+            for k in keys:
+                sub[k] += est[k]
+                total[k] += est[k]
+            rar = app.rarity(l, g)
+            detail = eur(est["mid"])
+            if abs(est["max"] - est["min"]) >= 1:
+                detail += "  (ventes %s – %s)" % (eur_short(est["min"]), eur_short(est["max"]))
+            block.append("• %s [%s] %s: %s" % (g, cond_txt, ("%s " % ("★" * rar[2])) if rar else "",
+                                                detail))
+            rows.append([l, g, cond_txt, round(est["mid"], 2), round(est["min"], 2),
+                         round(est["max"], 2), rar[1] if rar else "",
+                         (e or {}).get("title", "") if not est["manual"] else "",
+                         (e or {}).get("url", "") if not est["manual"] else ""])
+        if block:
+            lines.append("=== %s : %s ===" % (FULL_NAME[l], eur(sub["mid"])))
+            lines += block + [""]
+    head = ["VALEUR DE LA COLLECTION (versions PAL)",
+            time.strftime("Calculé le %d/%m/%Y à %H:%M"),
+            "Source : PriceCharting + mes prix  •  USD→EUR %s (%s)"
+            % (("%.4f" % fx).replace(".", ","), note), "",
+            "VALEUR ESTIMÉE : %s" % eur(total["mid"]),
+            "Fourchette : %s – %s" % (eur(total["min"]), eur(total["max"])),
+            "%s, %d sans prix" % (
+                plural(n_ok, "jeu valorisé").replace("jeu valorisés", "jeux valorisés"),
+                len(missing)), ""]
+    if missing:
+        lines += ["=== SANS PRIX (non comptés) ==="] + missing + [""]
+    csv_note = "CSV : Documents/valeur_collection.csv"
+    try:
+        with open(CSV_FILE, "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f, delimiter=";")  # « ; » : s'ouvre directement dans Excel/Numbers FR
+            w.writerow(["console", "jeu", "condition", "prix_eur", "bas_eur", "haut_eur",
+                        "rarete", "fiche_pricecharting", "url"])
+            for r in rows:
+                w.writerow([str(x).replace(".", ",") if isinstance(x, float) else x for x in r])
+    except OSError as ex:
+        csv_note = "CSV non écrit : %s" % ex
+    return "\n".join(head + lines + [csv_note])
 
 
+def show_text(app, title, text):
+    tv = ui.TextView()
+    tv.name = title
+    tv.editable = False
+    tv.font = ("<System>", 13)
+    tv.background_color = app.theme["card"]
+    tv.text_color = app.theme["text"]
+    tv.text = text
+    tv.present("sheet")
+
+
+# ====================================================================== lancement
 def main():
-    view = GameChecklist()
-    view.present("fullscreen")
+    app = App()
+    root = AppView(app)
+    root.push(HomeScreen(app, root))
+    root.present("fullscreen")
+    app.start()
 
 
 if __name__ == "__main__":
