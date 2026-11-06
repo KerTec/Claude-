@@ -4,38 +4,44 @@ Ma collection de jeux – checklist multi-consoles pour Pythonista (iPhone / iPa
 
 Consoles : PS2, N64, DS, 3DS, Xbox 360, Wii, GameCube, Switch.
 
+Utilisation :
+  * Mode « Cocher » : toucher un jeu le coche / décoche (sauvegarde automatique).
+  * Mode « Infos & prix » : toucher un jeu ouvre son menu (prix détaillé,
+    condition, mon prix, corriger la fiche, eBay, Leboncoin...).
+
+Prix (sans clé API, automatique) :
+  * Les prix viennent de PriceCharting (versions PAL, en dollars convertis en euros).
+  * Ils se chargent TOUT SEULS en arrière-plan, un jeu à la fois et à un rythme
+    tranquille (≈ 1 requête toutes les 4 s) : d'abord les jeux affichés en mode
+    « Infos & prix », puis tous les jeux possédés. Un prix est gardé 30 jours.
+  * Prix affiché = la cote PriceCharting (calculée sur les ventes réelles eBay).
+    Fourchette = ventes récentes (quart le moins cher → quart le plus cher).
+  * Si le site bloque les requêtes du script, l'app bascule toute seule sur un
+    navigateur intégré invisible (le même moteur que Safari).
+  * Mauvais jeu trouvé ? Menu du jeu > « Corriger la fiche PriceCharting ».
+  * Tu peux toujours saisir ton propre prix : il est prioritaire.
+  * Clé API PriceCharting (abonnement) facultative : menu d'un jeu > « Clé API ».
+
 Fichiers (dans Documents/) :
-  collection_jeux.json      jeux possédés + conditions + prix saisis à la main
+  collection_jeux.json      jeux possédés, conditions, prix saisis, fiches corrigées
                             (migration automatique depuis l'ancien collection_ps2.json)
-  prix_cache.json           prix PriceCharting déjà consultés (gardés 30 jours)
+  prix_cache.json           prix déjà chargés
   pricecharting_token.txt   clé API PriceCharting (facultative)
   valeur_collection.csv     export de la valeur de la collection
   debug_pricecharting.html  dernière page non reconnue (pour diagnostic)
-
-Prix :
-  * Sans clé API : aucune requête automatique. Le site n'est interrogé que quand
-    tu touches « Voir le prix » (1 requête toutes les 8 s maximum, pause d'1 h
-    si le site bloque). Tu peux aussi saisir ton propre prix.
-  * Avec une clé API officielle PriceCharting (abonnement payant), les prix se
-    chargent automatiquement en mode « Infos & prix » et pour le calcul de la
-    valeur. Clé : menu d'un jeu > « Clé API PriceCharting », ou fichier
-    Documents/pricecharting_token.txt.
-
-Utilisation :
-  * Mode « Cocher » : toucher un jeu le coche / décoche.
-  * Mode « Infos & prix » : toucher un jeu ouvre son menu (prix, condition,
-    copier, eBay, Leboncoin...).
 """
 
 import csv
+import html as htmllib
 import json
 import os
+import random
 import re
 import threading
 import time
 import unicodedata
 import webbrowser
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlencode
 
 import console
 import ui
@@ -49,11 +55,14 @@ CSV_FILE = os.path.join(DOCS, "valeur_collection.csv")
 DEBUG_FILE = os.path.join(DOCS, "debug_pricecharting.html")
 TOKEN_FILE = os.path.join(DOCS, "pricecharting_token.txt")
 
+CACHE_VERSION = 2           # change si le format du cache change (l'ancien est ignoré)
 CACHE_TTL = 30 * 24 * 3600  # un prix est gardé 30 jours (les cotes bougent peu)
-ERR_TTL = 60 * 60           # après une erreur, pas de nouvel essai automatique avant 1 h
-MIN_GAP = 8.0               # au moins 8 s entre deux requêtes vers PriceCharting
-BLOCK_PAUSE = 3600          # pause d'1 h après un blocage anti-robot
+ERR_TTL = 6 * 3600          # après un échec sur un jeu, nouvel essai automatique 6 h plus tard
+MIN_GAP = 3.5               # au moins 3,5 s (+ 0 à 1,5 s au hasard) entre deux requêtes
+BLOCK_PAUSE = 30 * 60       # pause si même le navigateur intégré est bloqué
+WEB_TIMEOUT = 35            # délai max de chargement d'une page dans le navigateur intégré
 DEFAULT_FX = 0.92           # taux USD→EUR de secours si hors ligne
+BASE = "https://www.pricecharting.com"
 
 # ====================================================================== catalogue
 PS2 = [
@@ -398,11 +407,15 @@ GAMES_BY = {
     c[0]: list(dict.fromkeys(g for _, games in c[2] for g in games)) for c in CONSOLES
 }
 
-# condition : (id de la cote sur la page PriceCharting, suffixe du bloc des ventes, champ API)
+# Noms à chercher sur PriceCharting quand le titre du catalogue est en français
+# ou différent du titre PAL anglais utilisé par le site.
+SEARCH_ALIASES = {}
+
+# condition : (id de la cote sur la page du jeu, bloc des ventes, champ API, colonne recherche)
 COND = {
-    "Disque seul": ("used_price", "used", "loose-price"),
-    "Complet": ("complete_price", "cib", "cib-price"),
-    "Neuf": ("new_price", "new", "new-price"),
+    "Disque seul": ("used_price", "used", "loose-price", "used_price"),
+    "Complet": ("complete_price", "cib", "cib-price", "cib_price"),
+    "Neuf": ("new_price", "new", "new-price", "new_price"),
 }
 DEFAULT_COND = "Disque seul"
 FILTERS = ["Tous", "À acheter", "Possédés"]
@@ -441,8 +454,10 @@ def normalize(text):
 
 
 def search_name(game):
-    """Nom à envoyer aux sites : sans parenthèses, premier titre de « X / Y », sans accents."""
-    g = re.sub(r"\s*\(.*?\)", "", game).split(" / ")[0]
+    """Nom à envoyer aux sites : alias éventuel, sans parenthèses,
+    premier titre de « X / Y », sans accents."""
+    g = SEARCH_ALIASES.get(game, game)
+    g = re.sub(r"\s*\(.*?\)", "", g).split(" / ")[0]
     g = g.replace("’", "'").replace("–", "-")
     return strip_accents(g).strip()
 
@@ -450,6 +465,11 @@ def search_name(game):
 def eur(x):
     """1234.5 -> « 1 234,50 € »"""
     return "{:,.2f} €".format(x).replace(",", " ").replace(".", ",")
+
+
+def eur_short(x):
+    """Montant arrondi pour la liste : « 18 € », « 1 234 € »."""
+    return "{:,.0f} €".format(x).replace(",", " ")
 
 
 def plural(n, word):
@@ -462,6 +482,17 @@ def parse_euros(text):
     if v < 0:
         raise ValueError("négatif")
     return round(v, 2)
+
+
+def quantile(sorted_values, q):
+    """Quantile par interpolation linéaire sur une liste déjà triée."""
+    n = len(sorted_values)
+    if n == 1:
+        return sorted_values[0]
+    pos = (n - 1) * q
+    lo = int(pos)
+    hi = min(lo + 1, n - 1)
+    return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * (pos - lo)
 
 
 def read_token():
@@ -480,10 +511,10 @@ def write_token(token):
         os.remove(TOKEN_FILE)
 
 
-def save_debug(html):
+def save_debug(page):
     try:
         with open(DEBUG_FILE, "w", encoding="utf-8") as f:
-            f.write(html or "")
+            f.write(page or "")
     except OSError:
         pass
 
@@ -517,13 +548,14 @@ def on_main(fn, *args):
 
 # ====================================================================== collection
 class Collection:
-    """Jeux possédés, condition choisie par jeu et prix saisis à la main."""
+    """Jeux possédés, condition par jeu, prix saisis à la main, fiches corrigées."""
 
     def __init__(self):
         self.lock = threading.RLock()
         self.owned = {label: set() for label in LABELS}
         self.conditions = {}
         self.manual = {}
+        self.urls = {}  # fiche PriceCharting choisie à la main : "PS2|jeu" -> url
         self.load()
 
     def load(self):
@@ -542,6 +574,10 @@ class Collection:
                 self.manual = {k: float(v) for k, v in manual.items()
                                if isinstance(k, str) and isinstance(v, (int, float))
                                and not isinstance(v, bool) and v >= 0}
+            urls = data.get("_urls")
+            if isinstance(urls, dict):
+                self.urls = {k: v for k, v in urls.items()
+                             if isinstance(k, str) and isinstance(v, str) and "/game/" in v}
             return
         legacy = read_json(LEGACY_FILE)  # ancienne version (PS2 seule)
         if isinstance(legacy, list):
@@ -556,6 +592,7 @@ class Collection:
             payload = {k: sorted(v) for k, v in self.owned.items()}
             payload["_conditions"] = dict(self.conditions)
             payload["_manual"] = dict(self.manual)
+            payload["_urls"] = dict(self.urls)
             try:
                 write_json(DATA_FILE, payload, indent=2)
             except OSError as e:
@@ -599,15 +636,77 @@ class Collection:
             else:
                 self.manual[key_of(label, game)] = value
 
+    def fixed_url(self, label, game):
+        return self.urls.get(key_of(label, game))
+
+    def set_fixed_url(self, label, game, url):
+        with self.lock:
+            if url:
+                self.urls[key_of(label, game)] = url
+            else:
+                self.urls.pop(key_of(label, game), None)
+
 
 # ====================================================================== réseau
 class PriceError(Exception):
     pass
 
 
-class PoliteHttp:
-    """Une requête à la fois, MIN_GAP secondes d'écart, 1 seul nouvel essai,
-    et arrêt total pendant BLOCK_PAUSE si le site bloque."""
+class Blocked(PriceError):
+    pass
+
+
+def is_challenge(status, text):
+    t = text[:5000] if text else ""
+    return (status in (403, 503) and ("cf-" in t or "cloudflare" in t.lower())) \
+        or "<title>Just a moment" in t or "challenge-platform" in t
+
+
+class WebFetcher:
+    """Navigateur intégré invisible (moteur Safari). Il exécute le JavaScript et passe
+    les vérifications anti-robot que le module requests ne passe pas."""
+
+    def __init__(self, host):
+        self.wv = ui.WebView(frame=(0, 0, 4, 4))
+        self.wv.touch_enabled = False
+        self.wv.alpha = 0.02
+        self.wv.scales_page_to_fit = False
+        host.add_subview(self.wv)
+        try:
+            host.send_to_back(self.wv)
+        except Exception:
+            pass
+
+    def _js(self, code):
+        try:
+            return self.wv.eval_js(code) or ""
+        except Exception:
+            return ""
+
+    def get(self, url):
+        self._js("window.__cj_old = 1;")  # repère : disparaît quand la nouvelle page est chargée
+        on_main(self.wv.load_url, url)
+        start = time.time()
+        time.sleep(1.0)
+        while time.time() - start < WEB_TIMEOUT:
+            ready = self._js("(typeof window.__cj_old === 'undefined' && "
+                             "document.readyState === 'complete') ? 'ok' : ''")
+            if ready == "ok":
+                title = self._js("document.title")
+                if "Just a moment" not in title:
+                    time.sleep(0.3)
+                    page = self._js("document.documentElement.outerHTML")
+                    href = self._js("location.href") or url
+                    if page:
+                        return href, page
+            time.sleep(0.7)
+        raise Blocked("le navigateur intégré n'a pas pu charger la page (vérification "
+                      "anti-robot trop longue ou pas de connexion)")
+
+
+class Fetcher:
+    """Une requête à la fois, avec un écart minimum entre deux requêtes.
+    1) module requests (rapide) ; 2) si le site le bloque, navigateur intégré."""
 
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
@@ -621,6 +720,8 @@ class PoliteHttp:
         self.lock = threading.Lock()
         self.last_request = 0.0
         self.blocked_until = 0.0
+        self.use_web = False
+        self.web = None
         self._session = None
 
     def session(self):
@@ -635,56 +736,97 @@ class PoliteHttp:
         left = self.blocked_until - time.time()
         return int(left / 60) + 1 if left > 0 else 0
 
-    def _block(self):
-        self.blocked_until = time.time() + BLOCK_PAUSE
+    def mode_text(self):
+        return "navigateur intégré" if self.use_web else "connexion directe"
+
+    def _pace(self):
+        wait = self.last_request + MIN_GAP + random.uniform(0, 1.5) - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        self.last_request = time.time()
+
+    def _requests_get(self, url):
+        import requests
+        last_error = None
+        for attempt in range(2):
+            if attempt:
+                time.sleep(5)
+            self._pace()
+            try:
+                r = self.session().get(url, timeout=20)
+            except requests.exceptions.Timeout:
+                last_error = "délai dépassé (site trop lent)"
+                continue
+            except requests.exceptions.RequestException:
+                last_error = "pas de connexion internet (ou site injoignable)"
+                continue
+            text = r.text or ""
+            if is_challenge(r.status_code, text) or r.status_code in (403, 429):
+                save_debug(text)
+                raise Blocked("PriceCharting bloque les requêtes directes (code %d)"
+                              % r.status_code)
+            if r.status_code == 404:
+                raise PriceError("page introuvable (404)")
+            if r.status_code >= 500:
+                last_error = "site en panne (code %d)" % r.status_code
+                continue
+            if r.status_code != 200:
+                raise PriceError("erreur HTTP %d" % r.status_code)
+            return r.url, text
+        raise PriceError(last_error or "échec de la connexion")
 
     def get(self, url, params=None):
+        """Renvoie (url finale, html)."""
+        if params:
+            url = url + ("&" if "?" in url else "?") + urlencode(params)
+        with self.lock:
+            mins = self.blocked_minutes()
+            if mins:
+                raise Blocked("PriceCharting est en pause encore %d min" % mins)
+            if not self.use_web:
+                try:
+                    return self._requests_get(url)
+                except Blocked:
+                    if self.web is None:
+                        self.blocked_until = time.time() + BLOCK_PAUSE
+                        raise
+                    self.use_web = True  # bascule sur le navigateur intégré
+            self._pace()
+            try:
+                final, page = self.web.get(url)
+            except Blocked:
+                self.blocked_until = time.time() + BLOCK_PAUSE
+                raise
+            if is_challenge(200, page):
+                self.blocked_until = time.time() + BLOCK_PAUSE
+                raise Blocked("vérification anti-robot non passée")
+            return final, page
+
+    def get_json(self, url, params):
+        """Pour l'API officielle (clé) : requests uniquement."""
         import requests
         with self.lock:
-            last_error = None
-            for attempt in range(2):
-                mins = self.blocked_minutes()
-                if mins:
-                    raise PriceError("PriceCharting a bloqué les requêtes : pause automatique, "
-                                     "encore %d min. Utilise « Ouvrir PriceCharting » ou "
-                                     "« Saisir mon prix » en attendant." % mins)
-                wait = self.last_request + MIN_GAP - time.time()
-                if wait > 0:
-                    time.sleep(wait)
-                self.last_request = time.time()
-                try:
-                    r = self.session().get(url, params=params, timeout=20)
-                except requests.exceptions.Timeout:
-                    last_error = "délai dépassé (site trop lent)"
-                except requests.exceptions.RequestException:
-                    last_error = "pas de connexion internet (ou site injoignable)"
-                else:
-                    text = r.text or ""
-                    if r.status_code == 403 or "<title>Just a moment" in text:
-                        save_debug(text)
-                        self._block()
-                        raise PriceError("PriceCharting bloque la requête (anti-robot, code %d). "
-                                         "Plus aucune requête pendant 1 h. Utilise « Ouvrir "
-                                         "PriceCharting » ou « Saisir mon prix »." % r.status_code)
-                    if r.status_code == 429:
-                        self._block()
-                        raise PriceError("PriceCharting demande de ralentir (code 429). "
-                                         "Pause automatique d'1 h.")
-                    if r.status_code >= 500:
-                        last_error = "site en panne (code %d)" % r.status_code
-                    elif r.status_code != 200:
-                        raise PriceError("erreur HTTP %d" % r.status_code)
-                    else:
-                        return r
-                if attempt == 0:
-                    time.sleep(10)
-            raise PriceError(last_error or "échec de la connexion")
+            self._pace()
+            try:
+                r = self.session().get(url, params=params, timeout=20)
+            except requests.exceptions.RequestException:
+                raise PriceError("pas de connexion internet (ou site injoignable)")
+            if r.status_code != 200:
+                raise PriceError("API PriceCharting : erreur HTTP %d" % r.status_code)
+            try:
+                return r.json()
+            except ValueError:
+                raise PriceError("réponse de l'API illisible")
 
 
-NET = PoliteHttp()
+NET = Fetcher()
 
+
+# ====================================================================== lecture des pages
 AMOUNT = r"\$\s*([\d,]+(?:\.\d{1,2})?)"
-JS_PRICE = r'class="[^"]*js-price[^"]*"[^>]*>\s*' + AMOUNT
+LOT_WORDS = re.compile(r"\b(lot|lots|bundle|joblot|job lot|collection of|x\s?[2-9]|"
+                       r"[2-9]\s?x|games|jeux|manual only|notice seule|case only|"
+                       r"boitier seul|box only|cover only)\b", re.I)
 
 
 def _amount(s):
@@ -693,65 +835,155 @@ def _amount(s):
 
 def search_url(label, game):
     q = "%s %s" % (search_name(game), PC[label][1])
-    return "https://www.pricecharting.com/search-products?type=prices&q=" + quote_plus(q)
+    return BASE + "/search-products?type=prices&q=" + quote_plus(q)
 
 
-def parse_game_page(html):
-    """Lit une page produit PriceCharting : cotes + ventes réalisées par condition."""
+def _clean_text(s):
+    return re.sub(r"\s+", " ", htmllib.unescape(re.sub(r"<[^>]+>", " ", s))).strip()
+
+
+def parse_search(page, slug):
+    """Résultats de recherche de la console voulue : [{url, title, guide}]."""
+    results = []
+    chunks = re.split(r'<tr id="product-\d+"', page)[1:]
+    for chunk in chunks:
+        chunk = chunk.split("</tr>", 1)[0]
+        m = re.search(r'<td class="title">\s*<a href="([^"]+)"[^>]*>(.*?)</a>', chunk, re.S)
+        if not m:
+            continue
+        url = m.group(1)
+        if url.startswith("/"):
+            url = BASE + url
+        if "/game/%s/" % slug not in url:
+            continue
+        guide = {}
+        for cond, v in COND.items():
+            p = re.search(r'<td class="price numeric %s">\s*<span class="js-price">\s*%s'
+                          % (v[3], AMOUNT), chunk)
+            guide[cond] = _amount(p.group(1)) if p else None
+        results.append({"url": url.split("?")[0], "title": _clean_text(m.group(2)),
+                        "guide": guide})
+    return results
+
+
+def parse_game_page(page):
+    """Page d'un jeu : nom, cotes et ventes eBay réalisées par condition."""
+    m = re.search(r'<h1 id="product_name"[^>]*>(.*?)<a', page, re.S)
+    title = _clean_text(m.group(1)) if m else ""
+
     guide = {}
-    for cond, (tid, _, _) in COND.items():
-        m = re.search(r'<td[^>]*id="%s"[^>]*>(.*?)</td>' % tid, html, re.S)
+    for cond, v in COND.items():
+        m = re.search(r'<td[^>]*id="%s"[^>]*>(.*?)</td>' % v[0], page, re.S)
         p = re.search(AMOUNT, m.group(1)) if m else None
         guide[cond] = _amount(p.group(1)) if p else None
 
-    by_suffix = {v[1]: c for c, v in COND.items()}
-    sales = {c: [] for c in COND}
-    marks = [(m.start(), m.group(1))
-             for m in re.finditer(r"completed-auctions-([a-z\-]+)", html)]
-    for i, (pos, suffix) in enumerate(marks):
-        cond = by_suffix.get(suffix)
-        if not cond:
-            continue
-        end = marks[i + 1][0] if i + 1 < len(marks) else len(html)
-        block = html[pos:min(end, pos + 60000)]
-        found = [_amount(x) for x in re.findall(JS_PRICE, block)] or \
-                [_amount(x) for x in re.findall(AMOUNT, block)]
-        # Le même identifiant peut apparaître plusieurs fois (onglet + tableau) :
-        # on garde le bloc le plus fourni au lieu de tout additionner.
-        if len(found) > len(sales[cond]):
-            sales[cond] = found
-
-    for cond, values in sales.items():
+    sales = {}
+    for cond, v in COND.items():
+        start = page.find('<div class="completed-auctions-%s"' % v[1])
+        values = []
+        if start >= 0:
+            end = page.find('<div class="completed-auctions-', start + 10)
+            block = page[start:end if end > 0 else start + 200000]
+            for row in re.split(r'<tr id="', block)[1:]:
+                row = row.split("</tr>", 1)[0]
+                p = re.search(r'class="js-price"\s*>\s*' + AMOUNT, row)
+                if not p:
+                    continue
+                t = re.search(r'<td class="title">(.*?)</td>', row, re.S)
+                if t and LOT_WORDS.search(_clean_text(t.group(1))):
+                    continue  # lots, notices seules, boîtiers seuls...
+                values.append(_amount(p.group(1)))
         g = guide.get(cond)
-        if g and values:  # écarte les annonces aberrantes (lots, erreurs de saisie)
-            kept = [v for v in values if g / 4.0 <= v <= g * 4.0]
-            sales[cond] = kept or values
-    return guide, sales
+        if g and values:  # écarte les ventes aberrantes
+            kept = [x for x in values if g / 3.0 <= x <= g * 3.0]
+            values = kept or values
+        sales[cond] = values
+    return title, guide, sales
+
+
+# ---------------------------------------------------------------- choix du bon jeu
+ROMAN = {"i": "1", "ii": "2", "iii": "3", "iv": "4", "v": "5", "vi": "6", "vii": "7",
+         "viii": "8", "ix": "9", "x": "10", "xi": "11", "xii": "12", "xiii": "13"}
+STOP = {"the", "a", "an", "of", "and", "de", "la", "le", "les", "du", "des", "et"}
+EDITION = {"platinum", "essentials", "classics", "greatest", "hits", "selects", "players",
+           "player", "choice", "edition", "special", "limited", "collectors", "collector",
+           "steelbook", "version", "budget", "best", "favourites", "favorites", "pal",
+           "uk", "fr", "french", "german", "italian", "spanish", "value", "nintendo",
+           "playstation", "ps2", "wii", "xbox", "360", "ds", "3ds", "gamecube", "switch",
+           "n64", "game", "video", "standard", "reprint", "new"}
+BAD = {"demo", "promo", "manual", "guide", "strategy", "case", "only", "soundtrack",
+       "amiibo", "controller", "bundle", "console", "system", "pack", "box", "art",
+       "poster", "not", "resale", "disc", "cover", "sleeve", "kiosk", "trial"}
+
+
+def title_tokens(s):
+    s = normalize(s).replace("&", " and ").replace("'", "")
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    return [ROMAN.get(t, t) for t in s.split() if t not in STOP]
+
+
+def match_score(wanted, candidate):
+    w, c = set(title_tokens(wanted)), set(title_tokens(candidate))
+    if not w or not c:
+        return 0.0
+    common = len(w & c)
+    if not common:
+        return 0.0
+    missing = w - c
+    penalty = 0.0
+    for t in c - w:
+        if t in BAD:
+            penalty += 2.0
+        elif t.isdigit():
+            penalty += 1.5   # « Halo 3 » ≠ « Halo 4 »
+        elif t in EDITION:
+            penalty += 0.15  # « Platinum » : même jeu, réédition
+        else:
+            penalty += 1.0
+    penalty += sum(1.5 if t.isdigit() else 1.0 for t in missing)
+    return common / (len(w) + penalty)
+
+
+def best_match(game, results):
+    names = [search_name(game)] + [p.strip() for p in game.split(" / ")[1:]]
+    best, best_score = None, 0.0
+    for r in results:
+        score = max(match_score(n, r["title"]) for n in names)
+        if score > best_score:
+            best, best_score = r, score
+    return (best, best_score) if best_score >= 0.55 else (None, best_score)
+
+
+# ---------------------------------------------------------------- récupération d'un prix
+def _entry(url, title, guide, sales, partial):
+    return {"v": CACHE_VERSION, "ts": time.time(), "url": url, "title": title,
+            "guide": guide, "sales": sales, "partial": partial}
+
+
+def fetch_game_page(url):
+    final, page = NET.get(url)
+    title, guide, sales = parse_game_page(page)
+    if not any(guide.values()) and not any(sales.values()):
+        save_debug(page)
+        raise PriceError("page lue mais prix non reconnus (voir debug_pricecharting.html)")
+    return _entry(final.split("?")[0], title, guide, sales, False)
 
 
 def fetch_api(label, game, token):
     """API officielle PriceCharting (clé personnelle). Prix renvoyés en centimes USD."""
     _, pcname = PC[label]
     q = "%s %s" % (search_name(game), pcname)
-    r = NET.get("https://www.pricecharting.com/api/products", params={"t": token, "q": q})
-    try:
-        data = r.json()
-    except ValueError:
-        raise PriceError("réponse de l'API illisible")
+    data = NET.get_json(BASE + "/api/products", {"t": token, "q": q})
     if data.get("status") != "success":
         raise PriceError("API PriceCharting : %s"
                          % data.get("error-message", "erreur (clé invalide ?)"))
-    products = data.get("products") or []
-    p = next((x for x in products
-              if (x.get("console-name") or "").lower() == pcname.lower()), None)
-    if not p:
+    products = [p for p in (data.get("products") or [])
+                if (p.get("console-name") or "").lower() == pcname.lower()]
+    cands = [{"title": p.get("product-name") or "", "p": p} for p in products]
+    best, _ = best_match(game, cands)
+    if not best:
         raise PriceError("introuvable sur PriceCharting (%s)" % pcname)
-    if not any(f[2] in p for f in COND.values()) and p.get("id"):
-        try:
-            p = NET.get("https://www.pricecharting.com/api/product",
-                        params={"t": token, "id": p["id"]}).json()
-        except ValueError:
-            raise PriceError("réponse de l'API illisible")
+    p = best["p"]
 
     def cents(field):
         v = p.get(field)
@@ -762,54 +994,58 @@ def fetch_api(label, game, token):
     guide = {c: cents(v[2]) for c, v in COND.items()}
     if not any(guide.values()):
         raise PriceError("pas de cote pour ce jeu")
-    return {"ts": time.time(), "url": search_url(label, game), "guide": guide,
-            "sales": {c: [] for c in COND}, "api": True}
+    return _entry(search_url(label, game), best["title"], guide, {}, True)
 
 
-def fetch_scrape(label, game):
-    slug, pcname = PC[label]
-    r = NET.get("https://www.pricecharting.com/search-products",
-                params={"q": "%s %s" % (search_name(game), pcname), "type": "prices"})
-    url, html = r.url, r.text or ""
-    if "/game/%s/" % slug not in url:  # pas de redirection directe : on prend le 1er résultat
-        m = re.search(r'href="(?:https://www\.pricecharting\.com)?(/game/%s/[^"?#]+)'
-                      % re.escape(slug), html)
-        if not m:
-            save_debug(html)
-            raise PriceError("introuvable sur PriceCharting (%s)" % pcname)
-        url = "https://www.pricecharting.com" + m.group(1)
-        html = NET.get(url).text or ""
-    guide, sales = parse_game_page(html)
-    if not any(guide.values()) and not any(sales.values()):
-        save_debug(html)
-        raise PriceError("page lue mais prix non reconnus (voir debug_pricecharting.html)")
-    return {"ts": time.time(), "url": url, "guide": guide, "sales": sales}
-
-
-def fetch_prices(label, game, token=None):
-    if token:
+def fetch_prices(label, game, fixed_url=None, known_url=None, full=False, token=None):
+    """Prix d'un jeu.
+    - fiche connue (corrigée à la main ou trouvée avant) : 1 requête sur la page du jeu ;
+    - sinon : 1 recherche, qui contient déjà les cotes de chaque résultat ;
+      full=True ajoute la page du jeu (ventes détaillées)."""
+    if token and not fixed_url:
         return fetch_api(label, game, token)
-    return fetch_scrape(label, game)
+    url = fixed_url or known_url
+    if url:
+        return fetch_game_page(url)
+    slug, pcname = PC[label]
+    final, page = NET.get(search_url(label, game))
+    if "/game/%s/" % slug in final:  # le site a redirigé directement vers le jeu
+        title, guide, sales = parse_game_page(page)
+        if any(guide.values()) or any(sales.values()):
+            return _entry(final.split("?")[0], title, guide, sales, False)
+    results = parse_search(page, slug)
+    best, _ = best_match(game, results)
+    if not best:
+        if not results and "product-" not in page:
+            save_debug(page)
+        raise PriceError("introuvable sur PriceCharting (%s). Utilise « Corriger la fiche "
+                         "PriceCharting » pour choisir le bon jeu." % pcname)
+    if full or not any(best["guide"].values()):
+        return fetch_game_page(best["url"])
+    return _entry(best["url"], best["title"], best["guide"], {}, True)
 
 
 def estimate(entry, cond, fx):
-    """min / max = vraies ventes réalisées récentes ; milieu = pile entre les deux.
-    Sans ventes connues : min = max = cote PriceCharting."""
-    if not isinstance(entry, dict):
+    """Prix typique = cote PriceCharting (à défaut, médiane des ventes).
+    Fourchette = quart le moins cher → quart le plus cher des ventes récentes."""
+    if not isinstance(entry, dict) or not isinstance(entry.get("guide"), dict):
         return None
-    guide_all = entry.get("guide")
-    if not isinstance(guide_all, dict):
-        return None
-    sales = (entry.get("sales") or {}).get(cond) or []
-    guide = guide_all.get(cond)
-    if sales:
-        lo, hi = min(sales), max(sales)
-    elif guide:
-        lo = hi = guide
+    guide = entry["guide"].get(cond)
+    sales = sorted(x for x in ((entry.get("sales") or {}).get(cond) or [])
+                   if isinstance(x, (int, float)))
+    if guide:
+        mid = guide
+    elif sales:
+        mid = quantile(sales, 0.5)
     else:
         return None
-    return {"min": lo * fx, "max": hi * fx, "mid": (lo + hi) / 2.0 * fx,
-            "guide": guide * fx if guide else None, "n": len(sales), "manual": False}
+    if len(sales) >= 3:
+        lo, hi = quantile(sales, 0.25), quantile(sales, 0.75)
+        lo, hi = min(lo, mid), max(hi, mid)
+    else:
+        lo = hi = mid
+    return {"min": lo * fx, "mid": mid * fx, "max": hi * fx, "n": len(sales),
+            "manual": False}
 
 
 # ====================================================================== cache des prix
@@ -830,16 +1066,22 @@ class PriceCache:
         with self.lock:
             self.data[key] = entry
 
+    def forget(self, key):
+        with self.lock:
+            self.data.pop(key, None)
+
     def record_error(self, key, message):
         """Garde l'ancien prix s'il existe, note seulement l'erreur."""
         now = time.time()
         with self.lock:
             old = self.get(key)
-            if old and isinstance(old.get("guide"), dict):
+            if self.has_price(old):
                 new = dict(old)
                 new.update({"err": message, "err_ts": now})
             else:
-                new = {"ts": now, "err": message, "err_ts": now}
+                new = {"v": CACHE_VERSION, "ts": now, "err": message, "err_ts": now}
+                if old and old.get("url"):
+                    new["url"] = old["url"]
             self.data[key] = new
 
     def save(self):
@@ -852,7 +1094,12 @@ class PriceCache:
 
     @staticmethod
     def has_price(e):
-        return bool(e) and isinstance(e.get("guide"), dict)
+        return bool(e) and e.get("v") == CACHE_VERSION and isinstance(e.get("guide"), dict)
+
+    def known_url(self, key):
+        e = self.get(key)
+        return e.get("url") if e and e.get("v") == CACHE_VERSION and \
+            "/game/" in (e.get("url") or "") else None
 
     def is_fresh(self, key):
         e = self.get(key)
@@ -860,7 +1107,7 @@ class PriceCache:
 
     def needs_fetch(self, key):
         e = self.get(key)
-        if not e:
+        if not e or e.get("v") != CACHE_VERSION:
             return True
         now = time.time()
         err_ts = e.get("err_ts")
@@ -881,21 +1128,29 @@ class PriceCache:
     def get_fx(self):
         c = self.data.get("_fx")
         valid = isinstance(c, dict) and isinstance(c.get("rate"), (int, float))
-        if valid and time.time() - c.get("ts", 0) < CACHE_TTL:
+        if valid and time.time() - c.get("ts", 0) < 24 * 3600:
             return float(c["rate"]), "taux du jour"
-        try:
-            import requests
-            r = requests.get("https://api.frankfurter.app/latest",
-                             params={"from": "USD", "to": "EUR"}, timeout=10)
-            rate = float(r.json()["rates"]["EUR"])
-            with self.lock:
-                self.data["_fx"] = {"rate": rate, "ts": time.time()}
-            self.save()
-            return rate, "taux du jour"
-        except Exception:
-            if valid:
-                return float(c["rate"]), "ancien taux (hors ligne)"
-            return DEFAULT_FX, "taux APPROXIMATIF %s (hors ligne)" % str(DEFAULT_FX).replace(".", ",")
+        import requests
+        sources = (
+            ("https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR",
+             lambda j: j["rates"]["EUR"]),
+            ("https://api.frankfurter.app/latest?from=USD&to=EUR",
+             lambda j: j["rates"]["EUR"]),
+            ("https://open.er-api.com/v6/latest/USD", lambda j: j["rates"]["EUR"]),
+        )
+        for url, pick in sources:
+            try:
+                rate = float(pick(requests.get(url, timeout=10).json()))
+                if 0.3 < rate < 3:
+                    with self.lock:
+                        self.data["_fx"] = {"rate": rate, "ts": time.time()}
+                    self.save()
+                    return rate, "taux du jour"
+            except Exception:
+                continue
+        if valid:
+            return float(c["rate"]), "ancien taux (hors ligne)"
+        return DEFAULT_FX, "taux APPROXIMATIF %s (hors ligne)" % str(DEFAULT_FX).replace(".", ",")
 
 
 # ====================================================================== thème
@@ -932,12 +1187,20 @@ class GameChecklist(ui.View):
         self.query = ""
         self.rows = []               # [(section, jeux affichés, possédés, total)]
         self.closed = False
-        self.gen = 0                 # change à chaque rafraîchissement : stoppe l'ancien chargement
+        self.wake = threading.Event()  # réveille le chargeur de prix
         self.busy = False            # calcul de valeur en cours
+        self.loading = None          # jeu dont le prix est en cours de chargement
+        self.loading_label = None
+        self.last_reload = 0.0
 
         self.build_ui()
+        try:
+            NET.web = WebFetcher(self)
+        except Exception:
+            NET.web = None
         self.layout()
         self.refresh()
+        run_thread(self.price_worker)
 
     # -------------------------------------------------------------- construction
     def build_ui(self):
@@ -1023,7 +1286,7 @@ class GameChecklist(ui.View):
 
     def will_close(self):
         self.closed = True
-        self.gen += 1
+        self.wake.set()
         self.prices.save()
 
     # -------------------------------------------------------------- état / affichage
@@ -1040,14 +1303,23 @@ class GameChecklist(ui.View):
         self.stats.text = "%s : %d/%d   •   Toutes consoles : %d/%d" % (
             self.label, here, total_here, owned_all, total_all)
 
+    def pending_count(self):
+        n = 0
+        for l in LABELS:
+            for g in self.coll.owned_games(l):
+                if self.coll.manual_price(l, g) is None and \
+                        not self.prices.has_price(self.prices.get(key_of(l, g))):
+                    n += 1
+        return n
+
     def default_status(self):
         mins = NET.blocked_minutes()
         if mins:
-            return "PriceCharting en pause encore %d min" % mins
+            return "PriceCharting en pause encore %d min (« Saisir mon prix » possible)" % mins
+        if self.loading:
+            return "Chargement du prix : %s" % self.loading
         if self.mode == MODE_INFO:
-            if self.token:
-                return "Clé API active : les prix se chargent automatiquement"
-            return "Sans clé API : touche un jeu > « Voir le prix »"
+            return "Touche un jeu pour voir son prix détaillé"
         return "Touche un jeu pour le cocher / décocher"
 
     def refresh(self):
@@ -1074,7 +1346,13 @@ class GameChecklist(ui.View):
         self.update_stats()
         self.status.text = self.default_status()
         self.table.reload()
-        self.start_live()
+        self.wake.set()
+
+    def reload_soon(self):
+        """Recharge la liste au plus toutes les 1,5 s (pendant les chargements de prix)."""
+        if time.time() - self.last_reload > 1.5:
+            self.last_reload = time.time()
+            on_main(self.table.reload)
 
     def save_collection(self):
         err = self.coll.save()
@@ -1089,65 +1367,72 @@ class GameChecklist(ui.View):
         e = self.prices.get(key_of(label, game))
         if PriceCache.has_price(e):
             est = estimate(e, cond, self.prices.fx_quick())
-            if est:
-                if abs(est["max"] - est["min"]) < 0.005:
-                    return "%s : ≈ %s" % (cond, eur(est["mid"]))
-                return "%s : ≈ %s  (min %s – max %s)" % (
-                    cond, eur(est["mid"]), eur(est["min"]), eur(est["max"]))
-            return "%s : pas de prix pour cette condition" % cond
-        if self.mode != MODE_INFO:
+            if not est:
+                return "%s : pas de cote pour cette condition" % cond
+            if est["max"] - est["min"] >= 1:
+                return "%s : ≈ %s  (ventes %s – %s)" % (
+                    cond, eur(est["mid"]), eur_short(est["min"]), eur_short(est["max"]))
+            return "%s : ≈ %s" % (cond, eur(est["mid"]))
+        if self.loading == game and self.loading_label == label:
+            return "Chargement du prix..."
+        if self.mode != MODE_INFO and not self.coll.is_owned(label, game):
             return ""
+        if e and e.get("v") == CACHE_VERSION and "err" in e:
+            return "Prix indisponible : %s" % e["err"][:60]
         mins = NET.blocked_minutes()
         if mins:
             return "Site en pause (%d min) – « Saisir mon prix » possible" % mins
-        if e and "err" in e:
-            return "Prix indisponible – touche le jeu pour réessayer"
-        if self.token:
-            return "Chargement du prix..."
-        return "Touche le jeu > « Voir le prix »"
+        return "Prix en attente de chargement"
 
-    # -------------------------------------------------------------- prix automatiques (clé API)
-    def start_live(self):
-        self.gen += 1
-        self.token = read_token()
-        if self.mode != MODE_INFO or self.closed or not self.token or NET.blocked_minutes():
-            return
-        label = self.label
-        todo = []
-        for _, games, _, _ in self.rows:
-            for g in games:
-                if g not in todo and self.coll.manual_price(label, g) is None \
-                        and self.prices.needs_fetch(key_of(label, g)):
-                    todo.append(g)
-        if todo:
-            run_thread(self.live_worker, self.gen, label, todo, self.token)
+    # -------------------------------------------------------------- chargement automatique
+    def next_job(self):
+        """Prochain jeu à chiffrer : d'abord ceux affichés en mode infos, puis les possédés."""
+        candidates = []
+        if self.mode == MODE_INFO:
+            candidates += [(self.label, g) for _, games, _, _ in self.rows for g in games]
+        candidates += [(self.label, g) for g in self.coll.owned_games(self.label)]
+        for l in LABELS:
+            candidates += [(l, g) for g in self.coll.owned_games(l)]
+        for l, g in candidates:
+            if self.coll.manual_price(l, g) is None and \
+                    self.prices.needs_fetch(key_of(l, g)):
+                return l, g
+        return None
 
-    def live_worker(self, gen, label, todo, token):
-        time.sleep(0.6)  # laisse finir la saisie dans la recherche
-        if gen != self.gen or self.closed:
-            return
-        self.prices.get_fx()
-        for i, g in enumerate(todo, 1):
-            if gen != self.gen or self.closed:
-                return
-            key = key_of(label, g)
-            if not self.prices.needs_fetch(key):
+    def price_worker(self):
+        time.sleep(1.0)
+        fx_done = False
+        while not self.closed:
+            if NET.blocked_minutes():
+                self.set_status(self.default_status())
+                self.wake.wait(60)
+                self.wake.clear()
                 continue
-            self.set_status("Prix en direct %d/%d : %s" % (i, len(todo), g))
+            job = self.next_job()
+            if not job:
+                self.wake.wait(30)
+                self.wake.clear()
+                continue
+            if not fx_done:
+                self.prices.get_fx()
+                fx_done = True
+            label, game = job
+            key = key_of(label, game)
+            self.loading, self.loading_label = game, label
+            self.set_status("Chargement du prix (%s) : %s" % (label, game))
+            self.reload_soon()
             try:
-                self.prices.put(key, fetch_prices(label, g, token))
+                self.prices.put(key, fetch_prices(
+                    label, game, fixed_url=self.coll.fixed_url(label, game),
+                    known_url=self.prices.known_url(key), token=read_token()))
             except Exception as ex:
                 self.prices.record_error(key, str(ex))
-                if NET.blocked_minutes():
-                    self.prices.save()
-                    on_main(self.table.reload)
-                    self.set_status("PriceCharting en pause %d min" % NET.blocked_minutes())
-                    return
+            self.loading = self.loading_label = None
             self.prices.save()
-            if gen == self.gen:
+            self.reload_soon()
+            if not self.next_job():
+                self.set_status("Tous les prix sont à jour (%s)" % NET.mode_text())
                 on_main(self.table.reload)
-        if gen == self.gen and not self.closed:
-            self.set_status("Prix à jour")
 
     # -------------------------------------------------------------- contrôles
     def console_changed(self, sender):
@@ -1188,10 +1473,13 @@ class GameChecklist(ui.View):
 
     def tableview_cell_for_row(self, tableview, section, row):
         t = self.theme
-        game = self.rows[section][1][row]
-        owned = self.coll.is_owned(self.label, game)
         cell = ui.TableViewCell("subtitle")
         cell.background_color = t["bg"]
+        try:
+            game = self.rows[section][1][row]
+        except IndexError:
+            return cell
+        owned = self.coll.is_owned(self.label, game)
         cell.text_label.text = game
         cell.text_label.font = ("<System>", 14)
         cell.text_label.number_of_lines = 1
@@ -1224,10 +1512,9 @@ class GameChecklist(ui.View):
         has_manual = self.coll.manual_price(label, game) is not None
 
         actions = [
+            ("Voir le prix détaillé", lambda: run_thread(self.show_price, label, game)),
             ("Décocher (je ne l'ai plus)" if owned else "Cocher (je l'ai)",
              lambda: self.toggle_from_menu(label, game)),
-            ("Copier le nom", lambda: self.copy_name(game)),
-            ("Voir le prix (min / milieu / max)", lambda: run_thread(self.show_price, label, game)),
             ("Saisir mon prix (€)", lambda: self.ask_manual(label, game)),
         ]
         if has_manual:
@@ -1237,17 +1524,20 @@ class GameChecklist(ui.View):
                             (lambda c=c: self.change_condition(label, game, c))))
         q = search_name(game)
         actions += [
-            ("Ouvrir PriceCharting", lambda: webbrowser.open(search_url(label, game))),
+            ("Corriger la fiche PriceCharting", lambda: self.fix_url(label, game)),
+            ("Recharger le prix", lambda: self.reload_price(label, game)),
+            ("Copier le nom", lambda: self.copy_name(game)),
+            ("Ouvrir PriceCharting", lambda: webbrowser.open(
+                self.prices.known_url(key_of(label, game)) or search_url(label, game))),
             ("eBay.fr : ventes réalisées", lambda: webbrowser.open(
                 "https://www.ebay.fr/sch/i.html?LH_Sold=1&LH_Complete=1&_nkw="
                 + quote_plus("%s %s PAL" % (q, FULL_NAME[label])))),
             ("Leboncoin", lambda: webbrowser.open(
                 "https://www.leboncoin.fr/recherche?text="
                 + quote_plus("%s %s" % (q, FULL_NAME[label])))),
-            ("Clé API PriceCharting", self.ask_token),
+            ("Clé API PriceCharting (facultatif)", self.ask_token),
         ]
-        titles = [a[0] for a in actions]
-        choice = dialogs.list_dialog(game, titles)
+        choice = dialogs.list_dialog(game, [a[0] for a in actions])
         if not choice:
             return
         dict(actions)[choice]()
@@ -1284,7 +1574,7 @@ class GameChecklist(ui.View):
     def clear_manual(self, label, game):
         self.coll.set_manual(label, game, None)
         self.save_collection()
-        on_main(self.table.reload)
+        on_main(self.refresh)
         hud("Prix effacé", "success", 0.8)
 
     def change_condition(self, label, game, cond):
@@ -1293,12 +1583,42 @@ class GameChecklist(ui.View):
         on_main(self.table.reload)
         hud("Condition : " + cond, "success", 0.8)
 
+    def reload_price(self, label, game):
+        self.prices.forget(key_of(label, game))
+        on_main(self.refresh)
+        hud("Prix redemandé", "success", 0.8)
+
+    def fix_url(self, label, game):
+        e = self.prices.get(key_of(label, game)) or {}
+        found = e.get("title") or "aucun"
+        try:
+            txt = console.input_alert(
+                "Corriger la fiche",
+                "Jeu trouvé : %s\n\nOuvre « Ouvrir PriceCharting », trouve le bon jeu "
+                "(version PAL), copie le lien de sa page puis colle-le ici. "
+                "Laisse vide pour revenir à la recherche automatique." % found,
+                self.coll.fixed_url(label, game) or "", "Enregistrer")
+        except KeyboardInterrupt:
+            return
+        txt = (txt or "").strip()
+        m = re.search(r"pricecharting\.com(/game/[^\s?#]+)", txt)
+        if txt and not m:
+            alert("Lien invalide", "Le lien doit ressembler à :\n"
+                  "https://www.pricecharting.com/game/pal-playstation-2/god-of-war")
+            return
+        self.coll.set_fixed_url(label, game, BASE + m.group(1) if m else None)
+        self.save_collection()
+        self.prices.forget(key_of(label, game))
+        on_main(self.refresh)
+        hud("Fiche enregistrée" if m else "Recherche automatique", "success", 0.8)
+
     def ask_token(self):
         try:
             txt = console.input_alert(
                 "Clé API PriceCharting",
-                "Clé de ton abonnement PriceCharting (page Subscription). "
-                "Laisse vide pour la supprimer.", self.token or "", "Enregistrer")
+                "Facultatif : les prix fonctionnent sans clé. Clé de ton abonnement "
+                "PriceCharting (page Subscription). Laisse vide pour la supprimer.",
+                self.token or "", "Enregistrer")
         except KeyboardInterrupt:
             return
         txt = (txt or "").strip()
@@ -1311,54 +1631,60 @@ class GameChecklist(ui.View):
         hud("Clé enregistrée" if txt else "Clé supprimée", "success", 0.8)
         on_main(self.refresh)
 
-    # -------------------------------------------------------------- prix d'un jeu
-    def entry_for(self, label, game):
-        """Prix en cache s'il est récent, sinon une requête (lève PriceError)."""
-        key = key_of(label, game)
-        if self.prices.is_fresh(key):
-            return self.prices.get(key)
-        try:
-            e = fetch_prices(label, game, read_token())
-        except Exception as ex:
-            self.prices.record_error(key, str(ex))
-            self.prices.save()
-            raise
-        self.prices.put(key, e)
-        self.prices.save()
-        return e
-
+    # -------------------------------------------------------------- prix détaillé d'un jeu
     def show_price(self, label, game):
-        if not self.prices.is_fresh(key_of(label, game)):
-            hud("Recherche du prix...", "success", 1.0)
-            self.set_status("Recherche du prix : %s" % game)
-        try:
-            e = self.entry_for(label, game)
-        except Exception as ex:
-            on_main(self.table.reload)
-            self.set_status(self.default_status())
-            alert("Prix indisponible", "%s\n\n%s" % (game, ex))
-            return
+        key = key_of(label, game)
+        e = self.prices.get(key)
+        need = not self.prices.is_fresh(key) or (e or {}).get("partial")
+        if need and not read_token():
+            hud("Chargement des ventes...", "success", 1.0)
+            try:
+                e = fetch_prices(label, game, fixed_url=self.coll.fixed_url(label, game),
+                                 known_url=self.prices.known_url(key), full=True)
+                self.prices.put(key, e)
+                self.prices.save()
+            except Exception as ex:
+                self.prices.record_error(key, str(ex))
+                self.prices.save()
+                old = self.prices.get(key)
+                if not self.prices.has_price(old):
+                    on_main(self.table.reload)
+                    alert("Prix indisponible", "%s\n\n%s" % (game, ex))
+                    return
+                e = old
+        elif need:
+            try:
+                e = fetch_prices(label, game, fixed_url=self.coll.fixed_url(label, game),
+                                 token=read_token())
+                self.prices.put(key, e)
+                self.prices.save()
+            except Exception as ex:
+                alert("Prix indisponible", "%s\n\n%s" % (game, ex))
+                return
         on_main(self.table.reload)
-        self.set_status(self.default_status())
         fx, note = self.prices.get_fx()
         cur = self.coll.condition(label, game)
-        lines = ["Source : PriceCharting (%s)" % PC[label][1],
-                 "Taux USD→EUR : %s (%s)" % (("%.4f" % fx).replace(".", ","), note),
+        lines = ["Fiche : %s (%s)" % (e.get("title") or "?", PC[label][1]),
                  "Mis à jour le %s" % time.strftime("%d/%m/%Y", time.localtime(e.get("ts", 0))),
-                 ""]
+                 "Taux USD→EUR : %s (%s)" % (("%.4f" % fx).replace(".", ","), note), ""]
         for c in COND:
             est = estimate(e, c, fx)
             mark = "▶ " if c == cur else ""
-            if est:
-                lines.append("%s%s\n   min %s • milieu %s • max %s\n   cote %s • %s" % (
-                    mark, c, eur(est["min"]), eur(est["mid"]), eur(est["max"]),
-                    eur(est["guide"]) if est["guide"] else "—", plural(est["n"], "vente")))
-            else:
+            if not est:
                 lines.append("%s%s : pas de donnée" % (mark, c))
+            elif est["n"] >= 3:
+                lines.append("%s%s : ≈ %s\n   ventes récentes : %s – %s (%s)" % (
+                    mark, c, eur(est["mid"]), eur(est["min"]), eur(est["max"]),
+                    plural(est["n"], "vente")))
+            else:
+                lines.append("%s%s : ≈ %s" % (mark, c, eur(est["mid"])))
         manual = self.coll.manual_price(label, game)
         if manual is not None:
             lines += ["", "Mon prix (utilisé pour la valeur) : %s" % eur(manual)]
-        lines += ["", e.get("url", "")]
+        if e.get("err"):
+            lines += ["", "Dernière mise à jour échouée : %s" % e["err"]]
+        lines += ["", "Pas le bon jeu ? Menu > « Corriger la fiche PriceCharting ».",
+                  e.get("url", "")]
         alert(game, "\n".join(lines))
 
     # -------------------------------------------------------------- valeur de la collection
@@ -1378,44 +1704,19 @@ class GameChecklist(ui.View):
     def _compute_value(self, only):
         try:
             labels = [only] if only else list(LABELS)
-            todo = [(l, g) for l in labels for g in self.coll.owned_games(l)]
-            if not todo:
+            if not any(self.coll.owned_games(l) for l in labels):
                 alert("Collection vide", "Coche d'abord des jeux possédés.")
                 return
-            token = read_token()
-            self.token = token
-            # Sans clé API : pas de requêtes en masse (risque de blocage) ;
-            # on utilise les prix déjà connus et ceux saisis à la main.
-            if token:
-                self.gen += 1  # coupe le chargement automatique en parallèle
-                for i, (l, g) in enumerate(todo, 1):
-                    if self.closed or NET.blocked_minutes():
-                        break
-                    key = key_of(l, g)
-                    if self.coll.manual_price(l, g) is not None or not self.prices.needs_fetch(key):
-                        continue
-                    self.set_status("Prix %d/%d : %s" % (i, len(todo), g))
-                    try:
-                        self.prices.put(key, fetch_prices(l, g, token))
-                    except Exception as ex:
-                        self.prices.record_error(key, str(ex))
-                    if i % 10 == 0:
-                        self.prices.save()
-                self.prices.save()
-            if self.closed:
-                return
-            self.set_status("Calcul du rapport...")
-            report = self.build_report(labels, bool(token))
-            on_main(self.refresh)
+            report = self.build_report(labels)
             on_main(self.show_text, "Valeur de la collection", report)
         except Exception as ex:
             alert("Erreur pendant le calcul", str(ex))
         finally:
             self.busy = False
 
-    def build_report(self, labels, has_token):
+    def build_report(self, labels):
         fx, note = self.prices.get_fx()
-        keys = ("min", "mid", "max", "guide")
+        keys = ("min", "mid", "max")
         total = dict.fromkeys(keys, 0.0)
         lines, rows, missing = [], [], []
         n_ok = 0
@@ -1427,48 +1728,46 @@ class GameChecklist(ui.View):
                 e = self.prices.get(key_of(l, g))
                 manual = self.coll.manual_price(l, g)
                 if manual is not None:
-                    est = {"min": manual, "max": manual, "mid": manual, "guide": None,
-                           "n": 0, "manual": True}
+                    est = {"min": manual, "max": manual, "mid": manual, "n": 0, "manual": True}
                     cond_txt = "mon prix"
                 else:
-                    est = estimate(e, cond, fx)
+                    est = estimate(e, cond, fx) if self.prices.has_price(e) else None
                     cond_txt = cond
                 if not est:
-                    why = (e or {}).get("err") or (
-                        "pas de prix pour cette condition" if PriceCache.has_price(e) else
-                        "pas encore de prix : touche le jeu > « Voir le prix » "
-                        "ou « Saisir mon prix »")
+                    if self.prices.has_price(e):
+                        why = "pas de cote pour cette condition"
+                    elif e and e.get("err"):
+                        why = e["err"]
+                    else:
+                        why = "prix en cours de chargement, réessaie dans quelques minutes"
                     missing.append("• %s – %s [%s] : %s" % (l, g, cond, why))
                     continue
                 n_ok += 1
                 for k in keys:
-                    v = est[k] if est[k] is not None else est["mid"]
-                    sub[k] += v
-                    total[k] += v
-                block.append("• %s [%s]\n   min %s | milieu %s | max %s | cote %s | %s" % (
-                    g, cond_txt, eur(est["min"]), eur(est["mid"]), eur(est["max"]),
-                    eur(est["guide"]) if est["guide"] else "—", plural(est["n"], "vente")))
-                rows.append([l, g, cond_txt, round(est["min"], 2), round(est["mid"], 2),
-                             round(est["max"], 2),
-                             round(est["guide"], 2) if est["guide"] else "",
-                             est["n"], (e or {}).get("url", "") if not est["manual"] else ""])
+                    sub[k] += est[k]
+                    total[k] += est[k]
+                if abs(est["max"] - est["min"]) >= 1:
+                    detail = "%s  (ventes %s – %s)" % (eur(est["mid"]), eur_short(est["min"]),
+                                                       eur_short(est["max"]))
+                else:
+                    detail = eur(est["mid"])
+                block.append("• %s [%s] : %s" % (g, cond_txt, detail))
+                rows.append([l, g, cond_txt, round(est["mid"], 2), round(est["min"], 2),
+                             round(est["max"], 2), (e or {}).get("title", "") if not est["manual"] else "",
+                             (e or {}).get("url", "") if not est["manual"] else ""])
             if block:
-                lines.append("=== %s : %s (milieu) | min %s | max %s ===" % (
-                    FULL_NAME[l], eur(sub["mid"]), eur(sub["min"]), eur(sub["max"])))
+                lines.append("=== %s : %s ===" % (FULL_NAME[l], eur(sub["mid"])))
                 lines += block + [""]
 
-        head = ["VALEUR DE LA COLLECTION (PAL, source PriceCharting + mes prix)",
+        head = ["VALEUR DE LA COLLECTION (versions PAL)",
                 time.strftime("Calculé le %d/%m/%Y à %H:%M"),
-                "Taux USD→EUR %s (%s)" % (("%.4f" % fx).replace(".", ","), note), "",
-                "TOTAL  min : %s" % eur(total["min"]),
-                "TOTAL  milieu : %s" % eur(total["mid"]),
-                "TOTAL  max : %s" % eur(total["max"]),
-                "TOTAL  cote PriceCharting : %s" % eur(total["guide"]),
-                "%s, %d sans prix" % (plural(n_ok, "jeu valorisé").replace("jeu valorisés", "jeux valorisés"),
-                                       len(missing))]
-        if not has_token:
-            head.append("(Sans clé API : seuls les prix déjà consultés ou saisis sont comptés.)")
-        head.append("")
+                "Source : PriceCharting + mes prix  •  USD→EUR %s (%s)"
+                % (("%.4f" % fx).replace(".", ","), note), "",
+                "VALEUR ESTIMÉE : %s" % eur(total["mid"]),
+                "Fourchette : %s – %s" % (eur(total["min"]), eur(total["max"])),
+                "%s, %d sans prix" % (
+                    plural(n_ok, "jeu valorisé").replace("jeu valorisés", "jeux valorisés"),
+                    len(missing)), ""]
         if missing:
             lines += ["=== SANS PRIX (non comptés) ==="] + missing + [""]
 
@@ -1476,8 +1775,8 @@ class GameChecklist(ui.View):
         try:
             with open(CSV_FILE, "w", encoding="utf-8-sig", newline="") as f:
                 w = csv.writer(f, delimiter=";")  # « ; » : s'ouvre directement dans Excel/Numbers FR
-                w.writerow(["console", "jeu", "condition", "min_eur", "milieu_eur",
-                            "max_eur", "cote_eur", "nb_ventes", "url"])
+                w.writerow(["console", "jeu", "condition", "prix_eur", "bas_eur", "haut_eur",
+                            "fiche_pricecharting", "url"])
                 for r in rows:
                     w.writerow([str(x).replace(".", ",") if isinstance(x, float) else x
                                 for x in r])
@@ -1494,7 +1793,6 @@ class GameChecklist(ui.View):
         tv.text_color = self.theme["text"]
         tv.text = text
         tv.present("sheet")
-        self.status.text = self.default_status()
 
     # -------------------------------------------------------------- export
     @ui.in_background
