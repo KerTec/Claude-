@@ -11,7 +11,8 @@ PS2, N64, DS, 3DS, Xbox 360, Wii, GameCube, Switch — 449 jeux.
    ```
 3. Ouvrir `collection_jeux.py` dans la liste des fichiers et toucher **▶**.
 
-Pour mettre à jour le script plus tard : refaire l'étape 2 (ta collection est gardée).
+Mises à jour : l'app les détecte toute seule (bandeau bleu « Mise à jour disponible » sur
+l'accueil, ou Journal > « Rechercher une mise à jour »). Ta collection est gardée.
 
 ## Ce que fait l'app
 - **Accueil** : une carte par console avec progression, nombre de jeux obtenus et valeur.
@@ -28,8 +29,14 @@ Pour mettre à jour le script plus tard : refaire l'étape 2 (ta collection est 
   n'est jamais sorti en Europe), convertis en euros au taux du jour.
 - Chargés en arrière-plan à un rythme tranquille (≈ 1 requête / 4 s). Au premier
   lancement, compter ≈ 30 min pour tout le catalogue ; ensuite c'est gardé 30 jours.
+- Si PriceCharting demande une vérification anti-robot, l'app bascule sur son navigateur
+  intégré ; si une case « Je ne suis pas un robot » apparaît, l'app te l'affiche :
+  touche-la et les prix reprennent. « Plus tard » met les prix en pause 30 min.
 - Si un jeu est mal reconnu : fiche du jeu > « Corriger la fiche » et coller le lien
   PriceCharting du bon jeu. Tu peux aussi saisir ton propre prix.
+
+## Un problème ?
+Accueil > « Journal / signaler un problème » > « Copier le rapport », puis colle-le à Claude.
 
 ## Fichiers (dans Documents/)
 | Fichier | Contenu |
