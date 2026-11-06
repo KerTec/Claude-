@@ -77,7 +77,7 @@ WEB_TIMEOUT = 35            # délai max de chargement d'une page dans le naviga
 DEFAULT_FX = 0.92           # taux USD→EUR de secours si hors ligne
 BASE = "https://www.pricecharting.com"
 
-APP_VERSION = "3.2 (06/11/2026)"
+APP_VERSION = "3.3 (06/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -892,6 +892,10 @@ class VerifySheet(ui.View):
 
     def will_close(self):
         self.fetcher.cancelled = True
+        if self.fetcher.box.superview is self:
+            self.remove_subview(self.fetcher.box)
+        self.fetcher.sheet = None
+        ui.delay(self.fetcher.attach_hidden, 0.3)
 
 
 class WebFetcher:
@@ -908,6 +912,7 @@ class WebFetcher:
         self.box.add_subview(self.wv)
         self.sheet = None
         self.cancelled = False
+        self.ok_logged = False
         self.attach_hidden()
 
     def attach_hidden(self):
@@ -925,17 +930,21 @@ class WebFetcher:
         self.wv.frame = (0, 0, w, h)
         self.box.touch_enabled = False
         try:
-            self.host.send_to_back(self.box)
+            self.box.send_to_back()   # derrière tous les écrans de l'app
         except Exception:
-            pass
+            log_exception("Impossible de cacher le navigateur intégré")
+            self.box.alpha = 0.01
 
     def show_to_user(self):
+        if self.sheet is not None:  # déjà affichée
+            return
         log("Vérification PriceCharting affichée à l'utilisateur", "ALERTE")
         if self.box.superview is not None:
             self.box.superview.remove_subview(self.box)
         self.sheet = VerifySheet(self)
         self.sheet.add_subview(self.box)
         self.box.touch_enabled = True
+        self.box.alpha = 1.0
         self.sheet.present("sheet")
         self.sheet.layout()
         self.wv.frame = (0, 0, self.box.width, self.box.height)
@@ -950,6 +959,12 @@ class WebFetcher:
             except Exception:
                 pass
         self.attach_hidden()
+
+    def open_manually(self):
+        """Montre PriceCharting pour faire la vérification soi-même (bouton du Journal)."""
+        self.wv.load_url(BASE)
+        self.show_to_user()
+        self.sheet.later.title = "Fermer"
 
     def _js(self, code):
         try:
@@ -985,10 +1000,15 @@ class WebFetcher:
                 if page:
                     if shown:
                         log("Vérification PriceCharting réussie")
+                    if not self.ok_logged:
+                        self.ok_logged = True
+                        log("Navigateur intégré : première page chargée (%s)" % title[:50])
                     return href, page
         finally:
             if shown:
                 on_main(self.hide_from_user)
+        log("Navigateur intégré : échec (titre de la page : %r, adresse : %s)"
+            % (self._js("document.title")[:60], self._js("location.href")[:90]), "AVERT")
         if self.cancelled:
             raise Blocked("vérification PriceCharting reportée (« Plus tard »)")
         raise Blocked("le navigateur intégré n'a pas pu charger la page (vérification "
@@ -2955,6 +2975,9 @@ class JournalScreen(Screen):
                                       % APP_VERSION.split(" ")[0], (0, 0, 10, 10),
                                       lambda s: self.check_update(), t["field"], t["accent"], 13)
         self.add_subview(self.update_btn)
+        self.verify_btn = make_button("Faire la vérification PriceCharting", (0, 0, 10, 10),
+                                      lambda s: self.verify(), t["field"], t["accent"], 13)
+        self.add_subview(self.verify_btn)
         for b in self.buttons:
             self.add_subview(b)
         self.tv = ui.TextView()
@@ -2974,7 +2997,15 @@ class JournalScreen(Screen):
         for i, b in enumerate(self.buttons):
             b.frame = (10 + i * (bw + 10), 44, bw, 34)
         self.update_btn.frame = (10, 86, w - 20, 34)
-        self.tv.frame = (10, 128, w - 20, max(0, h - 138))
+        self.verify_btn.frame = (10, 126, w - 20, 34)
+        self.tv.frame = (10, 168, w - 20, max(0, h - 178))
+
+    def verify(self):
+        if NET.web is None:
+            hud("Navigateur intégré indisponible", "error", 1.5)
+            return
+        NET.web.open_manually()
+        self.app.retry_now()
 
     @background
     def check_update(self):
