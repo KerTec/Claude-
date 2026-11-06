@@ -79,7 +79,7 @@ WEB_TIMEOUT = 35            # délai max de chargement d'une page dans le naviga
 DEFAULT_FX = 0.92           # taux USD→EUR de secours si hors ligne
 BASE = "https://www.pricecharting.com"
 
-APP_VERSION = "3.5 (06/11/2026)"
+APP_VERSION = "3.6 (06/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -584,10 +584,16 @@ def alert(title, message):
 
 
 def hud(message, icon="success", duration=1.0):
-    try:
-        console.hud_alert(message, icon, duration)
-    except Exception:
-        pass
+    """Petite bulle de confirmation. Toujours affichée depuis un fil séparé :
+    appelée depuis l'interface, console.hud_alert peut la geler (et iOS tue l'app)."""
+    def show():
+        try:
+            console.hud_alert(message, icon, duration)
+        except Exception:
+            pass
+    t = threading.Thread(target=show, name="bulle")
+    t.daemon = True
+    t.start()
 
 
 def run_thread(fn, *args):
@@ -1757,6 +1763,7 @@ class App:
         self.interrupted = False  # la session précédente s'est-elle mal fermée ?
         self.error_counts = {}
         self.update = None        # (version, code) si une mise à jour est disponible
+        self.heartbeat = 0.0      # dernier passage de l'interface (détecteur de gel)
         self.events_lock = threading.Lock()
         self.dirty_games = set()
         self.dirty_covers = set()
@@ -1772,6 +1779,29 @@ class App:
         run_named("prix", self.price_worker)
         run_named("jaquettes", self.covers.worker)
         run_named("maj", self.update_worker)
+        run_named("veille", self.freeze_watchdog)
+
+    def freeze_watchdog(self):
+        """Si l'interface ne répond plus (gel), note ce que fait chaque fil AVANT
+        qu'iOS ne tue l'app : un gel laisse ainsi une trace dans le journal."""
+        reported = False
+        while not self.closed:
+            time.sleep(2)
+            if not self.heartbeat:
+                continue
+            frozen = time.time() - self.heartbeat
+            if frozen > 6 and not reported:
+                reported = True
+                stacks = []
+                names = {t.ident: t.name for t in threading.enumerate()}
+                for ident, frame in sys._current_frames().items():
+                    stacks.append("--- fil %s ---\n%s" % (
+                        names.get(ident, ident), "".join(traceback.format_stack(frame)[-8:])))
+                log("Interface bloquée depuis %d s. État des fils :\n%s"
+                    % (frozen, "\n".join(stacks)), "GEL")
+            elif frozen < 2 and reported:
+                log("Interface débloquée", "GEL")
+                reported = False
 
     def update_worker(self):
         time.sleep(3)
@@ -1893,6 +1923,7 @@ class App:
     # ---------------------------------------------------------- actions
     def toggle(self, label, game):
         now = self.coll.toggle(label, game)
+        log("Action : %s %s | %s" % ("ajout de" if now else "retrait de", label, game))
         self.save()
         self.notify(label, game)
         return now
@@ -2089,6 +2120,7 @@ class AppView(ui.View):
             NET.web = None
 
     def push(self, screen):
+        log("Écran : %s" % (screen.title or type(screen).__name__))
         if self.stack:
             self.stack[-1].on_hide()
             self.stack[-1].hidden = True
@@ -2143,6 +2175,7 @@ class AppView(ui.View):
 
     def update(self):
         """Appelée par Pythonista 4 fois par seconde, sur le fil de l'interface."""
+        self.app.heartbeat = time.time()
         drain_main_queue()
         self.app.flush_events()
         for s in list(self.stack):
@@ -2283,6 +2316,7 @@ class HomeScreen(Screen):
     @background
     def do_update(self):
         version, code = self.app.update
+        log("Action : installation de la mise à jour %s" % version)
         try:
             console.alert("Mise à jour %s" % version,
                           "Installer la nouvelle version ? Ta collection est conservée.",
@@ -3022,7 +3056,8 @@ def diagnostic(app):
     if crash:
         lines += ["", "--- Plantages durs ---", crash[-4000:]]
     important = [ln for ln in _tail(LOG_FILE, 5000).split("\n")
-                 if "=====" in ln or " ALERTE " in ln or " CRASH " in ln or " ERREUR " in ln]
+                 if "=====" in ln or " ALERTE " in ln or " CRASH " in ln or " ERREUR " in ln
+                 or " GEL " in ln or "Action :" in ln]
     lines += ["", "--- Démarrages et problèmes importants (30 derniers) ---"]
     lines += important[-30:] or ["(aucun)"]
     lines += ["", "--- Journal (200 dernières lignes) ---", _tail(LOG_FILE, 200)]
