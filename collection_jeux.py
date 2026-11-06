@@ -31,18 +31,26 @@ Fichiers (dans Documents/) :
   jaquettes/                jaquettes téléchargées
   valeur_collection.csv     export de la valeur de la collection
   pricecharting_token.txt   clé API PriceCharting (facultative)
+  journal_collection.txt    journal de bord (erreurs, événements)
+  journal_plantages.txt     plantages durs de Pythonista
   debug_pricecharting.html  dernière page non reconnue (pour diagnostic)
+
+Un problème ? Accueil > « Journal / signaler un problème » > « Copier le rapport »,
+puis colle-le dans la conversation.
 """
 
 import csv
+import functools
 import hashlib
 import html as htmllib
 import json
 import os
 import random
 import re
+import sys
 import threading
 import time
+import traceback
 import unicodedata
 import webbrowser
 from urllib.parse import quote_plus, urlencode
@@ -68,6 +76,12 @@ BLOCK_PAUSE = 30 * 60       # pause si même le navigateur intégré est bloqué
 WEB_TIMEOUT = 35            # délai max de chargement d'une page dans le navigateur intégré
 DEFAULT_FX = 0.92           # taux USD→EUR de secours si hors ligne
 BASE = "https://www.pricecharting.com"
+
+APP_VERSION = "3.1 (06/11/2026)"
+LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
+CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
+RUN_MARKER = os.path.join(DOCS, ".collection_session_en_cours")
+LOG_MAX = 400000            # au-delà, le journal est raccourci (on garde la fin)
 
 # ====================================================================== catalogue
 PS2 = [
@@ -428,6 +442,16 @@ SEARCH_ALIASES = {
     "Ace Combat 5: The Unsung War": "Ace Combat: Squadron Leader",
     "Ace Combat Zero: The Belkan War": "Ace Combat: The Belkan War",
     "Star Fox 64": "Lylat Wars",
+    "Xenosaga Episode I": "Xenosaga",
+    "Professor Layton and the Diabolical Box": "Professor Layton and Pandora's Box",
+    "Professor Layton and the Unwound Future": "Professor Layton and the Lost Future",
+    "Professor Layton and the Azran Legacies": "Professor Layton and the Azran Legacy",
+    "Luigi’s Mansion: Dark Moon": "Luigi's Mansion 2",
+    "Kirby’s Return to Dream Land": "Kirby's Adventure Wii",
+    "Pikmin (New Play Control!)": "New Play Control: Pikmin",
+    "Pikmin 2 (New Play Control!)": "New Play Control: Pikmin 2",
+    "Sonic Colors": "Sonic Colours",
+    "Super Mario Strikers": "Mario Smash Football",
 }
 
 # Nom de la console sur PriceCharting pour la version US (jeux jamais sortis en Europe).
@@ -572,7 +596,121 @@ def run_thread(fn, *args):
 
 def on_main(fn, *args):
     """Exécute fn sur le fil de l'interface (obligatoire pour toucher aux vues)."""
-    ui.delay(lambda: fn(*args), 0)
+    ui.delay(lambda: guard(fn)(*args), 0)
+
+
+# ====================================================================== journal de bord
+_LOG_LOCK = threading.Lock()
+_LAST_ERROR_HUD = [0.0]
+_CRASH_FH = []
+
+
+def log(message, level="INFO"):
+    """Ajoute une ligne datée au journal (Documents/journal_collection.txt)."""
+    name = threading.current_thread().name
+    line = "%s [%s] %-6s %s\n" % (time.strftime("%d/%m %H:%M:%S"),
+                                   "ui" if name == "MainThread" else name[:10], level, message)
+    with _LOG_LOCK:
+        try:
+            if os.path.exists(LOG_FILE) and os.path.getsize(LOG_FILE) > LOG_MAX:
+                with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
+                    keep = f.read()[-LOG_MAX // 2:]
+                keep = keep[keep.find("\n") + 1:]
+                with open(LOG_FILE + ".tmp", "w", encoding="utf-8") as f:
+                    f.write("[... début du journal supprimé ...]\n" + keep)
+                os.replace(LOG_FILE + ".tmp", LOG_FILE)
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(line)
+        except OSError:
+            pass
+
+
+def log_exception(where):
+    log("%s\n%s" % (where, traceback.format_exc().rstrip()), "ERREUR")
+
+
+def guard(fn):
+    """Enveloppe : une erreur est enregistrée dans le journal au lieu de tout planter."""
+    if getattr(fn, "_guarded", False):
+        return fn
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except KeyboardInterrupt:      # « Annuler » dans une boîte de dialogue
+            return None
+        except Exception:
+            log_exception("Erreur dans %s" % getattr(fn, "__qualname__", fn))
+            if time.time() - _LAST_ERROR_HUD[0] > 8:
+                _LAST_ERROR_HUD[0] = time.time()
+                hud("Problème enregistré dans le journal", "error", 1.5)
+            return None
+    wrapper._guarded = True
+    return wrapper
+
+
+def guard_class(cls):
+    """Protège toutes les méthodes d'une vue (sauf __init__)."""
+    for name, value in list(vars(cls).items()):
+        if name.startswith("__") or isinstance(value, (staticmethod, classmethod, type)):
+            continue
+        if callable(value):
+            setattr(cls, name, guard(value))
+    return cls
+
+
+def background(fn):
+    """Comme ui.in_background, mais les erreurs vont dans le journal."""
+    return ui.in_background(guard(fn))
+
+
+def install_crash_handlers():
+    """Erreurs non attrapées (tous les fils) + plantages durs de Python."""
+    def hook(exc_type, exc, tb):
+        log("Exception non gérée :\n" + "".join(
+            traceback.format_exception(exc_type, exc, tb)).rstrip(), "CRASH")
+    previous = sys.excepthook
+
+    def excepthook(exc_type, exc, tb):
+        hook(exc_type, exc, tb)
+        try:
+            previous(exc_type, exc, tb)
+        except Exception:
+            pass
+    if not getattr(sys.excepthook, "_collection", False):  # pas de double journalisation
+        excepthook._collection = True
+        sys.excepthook = excepthook
+    if hasattr(threading, "excepthook"):
+        threading.excepthook = lambda a: hook(a.exc_type, a.exc_value, a.exc_traceback)
+    try:
+        import faulthandler
+        if not _CRASH_FH:
+            fh = open(CRASH_FILE, "a", encoding="utf-8")
+            fh.write("\n--- session du %s ---\n" % time.strftime("%d/%m/%Y %H:%M:%S"))
+            fh.flush()
+            _CRASH_FH.append(fh)
+            faulthandler.enable(fh, all_threads=True)
+    except Exception:
+        pass
+
+
+def crash_text():
+    """Plantages durs enregistrés (seulement les sessions qui contiennent une trace)."""
+    try:
+        with open(CRASH_FILE, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return ""
+    parts = [p for p in text.split("\n--- session du ") if "File " in p or "Fatal" in p]
+    return "\n--- session du ".join(parts[-3:]).strip()
+
+
+def run_named(name, fn, *args):
+    t = threading.Thread(target=guard(fn), args=args, name=name)
+    t.daemon = True
+    t.start()
+    return t
 
 
 # ====================================================================== collection
@@ -625,6 +763,7 @@ class Collection:
             try:
                 write_json(DATA_FILE, payload, indent=2)
             except OSError as e:
+                log("Sauvegarde de la collection impossible : %s" % e, "ERREUR")
                 return str(e)
         return None
 
@@ -818,16 +957,21 @@ class Fetcher:
                 except Blocked:
                     if self.web is None:
                         self.blocked_until = time.time() + BLOCK_PAUSE
+                        log("Requêtes bloquées et pas de navigateur intégré : pause", "ALERTE")
                         raise
                     self.use_web = True  # bascule sur le navigateur intégré
+                    log("Requêtes directes bloquées : passage au navigateur intégré", "ALERTE")
             self._pace()
             try:
                 final, page = self.web.get(url)
-            except Blocked:
+            except Blocked as ex:
                 self.blocked_until = time.time() + BLOCK_PAUSE
+                log("Navigateur intégré bloqué (%s) : pause %d min" % (ex, BLOCK_PAUSE // 60),
+                    "ALERTE")
                 raise
             if is_challenge(200, page):
                 self.blocked_until = time.time() + BLOCK_PAUSE
+                log("Vérification anti-robot non passée : pause", "ALERTE")
                 raise Blocked("vérification anti-robot non passée")
             return final, page
 
@@ -955,7 +1099,9 @@ EDITION = {"platinum", "essentials", "classics", "greatest", "hits", "selects", 
 BAD = {"demo", "promo", "manual", "guide", "strategy", "case", "only", "soundtrack",
        "amiibo", "controller", "bundle", "console", "system", "pack", "box", "art",
        "poster", "not", "resale", "disc", "cover", "sleeve", "kiosk", "trial", "press",
-       "kit", "slim", "wheel", "force", "steering", "headset", "microphone", "mic"}
+       "kit", "slim", "wheel", "force", "steering", "headset", "microphone", "mic",
+       "dvd", "movie", "film", "figure", "statue", "book", "artbook", "cd", "vinyl",
+       "card", "cards", "plush", "keychain", "memory", "adapter", "cable", "stand"}
 MATCH_MIN = 0.6
 
 
@@ -1196,8 +1342,8 @@ class PriceCache:
             self.data["_blocked_until"] = NET.blocked_until
             try:
                 write_json(CACHE_FILE, dict(self.data))
-            except (OSError, TypeError, ValueError):
-                pass
+            except (OSError, TypeError, ValueError) as e:
+                log("Sauvegarde du cache des prix impossible : %s" % e, "ERREUR")
 
     @staticmethod
     def has_price(e):
@@ -1366,9 +1512,14 @@ class CoverStore:
                     f.write(r.content)
                 self._make_grey(tmp, self.path(url, True))
                 os.replace(tmp, self.path(url))
-            except Exception:
+            except Exception as ex:
                 with self.lock:
                     self.failed.add(url)
+                log("Jaquette non téléchargée (%s) : %s" % (ex, url[-40:]), "AVERT")
+                try:
+                    os.remove(self.path(url) + ".tmp")
+                except OSError:
+                    pass
                 continue
             self.app.notify_cover(url)
             time.sleep(0.15)
@@ -1409,6 +1560,8 @@ class App:
         self.status = ""
         self.busy = False
         self.fx_checked = False
+        self.interrupted = False  # la session précédente s'est-elle mal fermée ?
+        self.error_counts = {}
         self.number = {l: {g: i + 1 for i, g in enumerate(GAMES_BY[l])} for l in LABELS}
         self.section_of = {l: {} for l in LABELS}
         for l in LABELS:
@@ -1417,10 +1570,15 @@ class App:
                     self.section_of[l].setdefault(g, s)
 
     def start(self):
-        run_thread(self.price_worker)
-        run_thread(self.covers.worker)
+        run_named("prix", self.price_worker)
+        run_named("jaquettes", self.covers.worker)
 
     def stop(self):
+        log("Fermeture normale de l'app")
+        try:
+            os.remove(RUN_MARKER)
+        except OSError:
+            pass
         self.closed = True
         self.wake.set()
         self.covers.event.set()
@@ -1561,44 +1719,63 @@ class App:
     def price_worker(self):
         time.sleep(0.8)
         while not self.closed:
-            if NET.blocked_minutes():
-                self.set_status("PriceCharting en pause encore %d min" % NET.blocked_minutes())
-                self.wake.wait(60)
-                self.wake.clear()
-                continue
-            job = self.next_job()
-            if not job:
-                self.loading = None
-                self.set_status("Catalogue à jour : prix et jaquettes chargés")
-                self.wake.wait(60)
-                self.wake.clear()
-                continue
-            if not self.fx_checked:
-                self.prices.get_fx()
-                self.fx_checked = True
-            label, game, full = job
-            key = key_of(label, game)
-            self.loading = (label, game)
-            left = self.remaining()
-            self.set_status("Chargement %s : %s  (encore %d)" % (label, game, left))
             try:
-                e = fetch_prices(label, game, fixed_url=self.coll.fixed_url(label, game),
-                                 known_url=self.prices.known_url(key), full=full,
-                                 token=None if full else read_token())
-                old = self.prices.get(key)
-                if not e.get("img") and old and old.get("img"):
-                    e["img"] = old["img"]
-                self.prices.put(key, e)
-            except Exception as ex:
-                self.prices.record_error(key, str(ex))
-            if full and self.priority == (label, game):
-                self.priority = None
+                self._price_step()
+            except Exception:
+                log_exception("Erreur dans le chargement des prix")
+                time.sleep(5)
+
+    def log_price_error(self, label, game, ex):
+        """Journalise un échec de prix sans inonder le journal (ex. : hors ligne)."""
+        kind = re.sub(r"\d+", "#", str(ex))[:80]
+        n = self.error_counts.get(kind, 0) + 1
+        self.error_counts[kind] = n
+        if n <= 3:
+            log("Prix non trouvé %s | %s : %s" % (label, game, ex), "AVERT")
+        elif n == 4:
+            log("Même erreur sur d'autres jeux (suivantes masquées) : %s" % ex, "AVERT")
+
+    def _price_step(self):
+        """Une étape : un jeu chargé (ou une attente)."""
+        if NET.blocked_minutes():
+            self.set_status("PriceCharting en pause encore %d min" % NET.blocked_minutes())
+            self.wake.wait(60)
+            self.wake.clear()
+            return
+        job = self.next_job()
+        if not job:
             self.loading = None
-            self.prices.save()
-            url = self.cover_url(label, game)
-            if url:
-                self.covers.want(url)
-            self.notify(label, game)
+            self.set_status("Catalogue à jour : prix et jaquettes chargés")
+            self.wake.wait(60)
+            self.wake.clear()
+            return
+        if not self.fx_checked:
+            self.prices.get_fx()
+            self.fx_checked = True
+        label, game, full = job
+        key = key_of(label, game)
+        self.loading = (label, game)
+        left = self.remaining()
+        self.set_status("Chargement %s : %s  (encore %d)" % (label, game, left))
+        try:
+            e = fetch_prices(label, game, fixed_url=self.coll.fixed_url(label, game),
+                             known_url=self.prices.known_url(key), full=full,
+                             token=None if full else read_token())
+            old = self.prices.get(key)
+            if not e.get("img") and old and old.get("img"):
+                e["img"] = old["img"]
+            self.prices.put(key, e)
+        except Exception as ex:
+            self.prices.record_error(key, str(ex))
+            self.log_price_error(label, game, ex)
+        if full and self.priority == (label, game):
+            self.priority = None
+        self.loading = None
+        self.prices.save()
+        url = self.cover_url(label, game)
+        if url:
+            self.covers.want(url)
+        self.notify(label, game)
 
 
 # ====================================================================== petits éléments
@@ -1624,6 +1801,7 @@ def make_button(title, frame, action, color, text_color="white", size=14):
     return b
 
 
+@guard_class
 class Screen(ui.View):
     """Écran poussé dans la pile de navigation."""
     title = ""
@@ -1657,6 +1835,7 @@ class Screen(ui.View):
 
 
 # ====================================================================== navigation
+@guard_class
 class AppView(ui.View):
     """Fenêtre principale : barre du haut (retour + titre) et pile d'écrans."""
 
@@ -1742,6 +1921,7 @@ class AppView(ui.View):
 
 
 # ====================================================================== accueil
+@guard_class
 class HomeScreen(Screen):
     title = "Ma collection"
 
@@ -1789,7 +1969,13 @@ class HomeScreen(Screen):
         owned = sum(self.app.coll.count(l) for l in LABELS)
         total = sum(len(GAMES_BY[l]) for l in LABELS)
         value = sum(self.app.console_value(l)[0] for l in LABELS)
-        card = ui.View(frame=(pad, y, w - 2 * pad, 132), background_color=t["card"])
+        if self.app.interrupted:
+            warn = make_button("⚠︎ La dernière session s'est mal fermée – voir le journal",
+                               (pad, y, w - 2 * pad, 40), lambda s: self.open_journal(),
+                               "#ff9f0a", "white", 13)
+            sv.add_subview(warn)
+            y += 40 + pad
+        card = ui.View(frame=(pad, y, w - 2 * pad, 172), background_color=t["card"])
         card.corner_radius = 14
         card.add_subview(make_label("Toutes consoles", (16, 12, w, 18), 13, False, t["sub"]))
         card.add_subview(make_label("%d / %d jeux" % (owned, total), (16, 32, w, 30),
@@ -1802,8 +1988,10 @@ class HomeScreen(Screen):
         card.add_subview(make_button("Rafraîchir les prix", (28 + (cw - 44) / 2, 92,
                                                               (cw - 44) / 2, 30),
                                      lambda s: self.refresh_all(), t["field"], t["accent"], 13))
+        card.add_subview(make_button("Journal / signaler un problème", (16, 130, cw - 32, 30),
+                                     lambda s: self.open_journal(), t["field"], t["sub"], 13))
         sv.add_subview(card)
-        y += 132 + pad
+        y += 172 + pad
         # --- une carte par console
         cols = 2 if w >= 600 else 1
         cw = (w - pad * (cols + 1)) / cols
@@ -1847,6 +2035,10 @@ class HomeScreen(Screen):
         card.add_subview(b)
         return card
 
+    def open_journal(self):
+        self.app.interrupted = False
+        self.nav.push(JournalScreen(self.app, self.nav))
+
     def refresh_all(self):
         n = 0
         for l in LABELS:
@@ -1864,7 +2056,7 @@ class HomeScreen(Screen):
     def app_value(self, only):
         compute_value(self.app, only)
 
-    @ui.in_background
+    @background
     def export(self):
         lines = []
         for label, full, sections, _, _ in CONSOLES:
@@ -1886,6 +2078,7 @@ class HomeScreen(Screen):
 
 
 # ====================================================================== grille d'une console
+@guard_class
 class ConsoleScreen(Screen):
     def __init__(self, app, nav, label):
         super().__init__()
@@ -2212,6 +2405,7 @@ def make_tile(app, label, game, frame, on_tap):
 
 
 # ====================================================================== fiche d'un jeu
+@guard_class
 class DetailScreen(Screen):
     def __init__(self, app, nav, label, game):
         super().__init__()
@@ -2399,7 +2593,7 @@ class DetailScreen(Screen):
         self.app.save()
         self.app.notify(self.label, self.game)
 
-    @ui.in_background
+    @background
     def ask_manual(self):
         cur = self.app.coll.manual_price(self.label, self.game)
         try:
@@ -2445,7 +2639,7 @@ class DetailScreen(Screen):
         clipboard.set(self.game)
         hud("Nom copié", "success", 0.8)
 
-    @ui.in_background
+    @background
     def fix_url(self):
         e = self.app.prices.get(key_of(self.label, self.game)) or {}
         try:
@@ -2468,7 +2662,7 @@ class DetailScreen(Screen):
         self.app.refetch(self.label, self.game, full=True)
         hud("Fiche enregistrée" if m else "Recherche automatique", "success", 0.8)
 
-    @ui.in_background
+    @background
     def ask_token(self):
         try:
             txt = console.input_alert(
@@ -2487,6 +2681,144 @@ class DetailScreen(Screen):
         hud("Clé enregistrée" if txt else "Clé supprimée", "success", 0.8)
 
 
+# ====================================================================== journal / diagnostic
+def _tail(path, n):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return "".join(f.readlines()[-n:]).rstrip()
+    except OSError:
+        return "(vide)"
+
+
+def _device_info():
+    info = []
+    try:
+        from objc_util import ObjCClass
+        dev = ObjCClass("UIDevice").currentDevice()
+        info.append("iOS %s (%s)" % (dev.systemVersion(), dev.model()))
+        bundle = ObjCClass("NSBundle").mainBundle()
+        info.append("Pythonista %s" % bundle.objectForInfoDictionaryKey_(
+            "CFBundleShortVersionString"))
+    except Exception:
+        import platform
+        info.append(platform.platform())
+    info.append("Python %s" % sys.version.split()[0])
+    return " • ".join(str(x) for x in info)
+
+
+def diagnostic(app):
+    """Rapport complet à copier/coller pour signaler un problème."""
+    try:
+        st = os.statvfs(DOCS)
+        free = "%d Mo" % (st.f_bavail * st.f_frsize / 1e6)
+    except Exception:
+        free = "?"
+    try:
+        files = os.listdir(COVER_DIR)
+        covers_mb = sum(os.path.getsize(os.path.join(COVER_DIR, f)) for f in files) / 1e6
+        covers = "%d fichiers, %.1f Mo" % (len(files), covers_mb)
+    except OSError:
+        covers = "aucune"
+    priced = sum(1 for l in LABELS for g in GAMES_BY[l] if app.entry(l, g))
+    errors = [(l, g, app.error_of(l, g)) for l in LABELS for g in GAMES_BY[l]
+              if app.error_of(l, g)]
+    lines = [
+        "=== RAPPORT – Ma collection de jeux ===",
+        "Version du script : %s" % APP_VERSION,
+        "Date : %s" % time.strftime("%d/%m/%Y %H:%M:%S"),
+        "Appareil : %s" % _device_info(),
+        "Stockage libre : %s" % free,
+        "Jeux possédés : %d / %d" % (sum(app.coll.count(l) for l in LABELS),
+                                     sum(len(GAMES_BY[l]) for l in LABELS)),
+        "Prix connus : %d / %d   •   jeux sans prix (erreur) : %d" % (
+            priced, sum(len(GAMES_BY[l]) for l in LABELS), len(errors)),
+        "Jaquettes : %s (file d'attente %d, échecs %d)" % (
+            covers, len(app.covers.queue), len(app.covers.failed)),
+        "Réseau : %s%s" % (NET.mode_text(), (", en pause %d min" % NET.blocked_minutes())
+                           if NET.blocked_minutes() else ""),
+        "Navigateur intégré : %s" % ("disponible" if NET.web else "indisponible"),
+        "État : %s" % (app.status or "—"),
+    ]
+    if errors:
+        lines += ["", "--- Jeux sans prix (10 premiers) ---"]
+        lines += ["%s | %s : %s" % e for e in errors[:10]]
+    crash = crash_text()
+    if crash:
+        lines += ["", "--- Plantages durs ---", crash[-4000:]]
+    important = [ln for ln in _tail(LOG_FILE, 5000).split("\n")
+                 if "=====" in ln or " ALERTE " in ln or " CRASH " in ln or " ERREUR " in ln]
+    lines += ["", "--- Démarrages et problèmes importants (30 derniers) ---"]
+    lines += important[-30:] or ["(aucun)"]
+    lines += ["", "--- Journal (200 dernières lignes) ---", _tail(LOG_FILE, 200)]
+    return "\n".join(lines)
+
+
+@guard_class
+class JournalScreen(Screen):
+    title = "Journal"
+
+    def __init__(self, app, nav):
+        super().__init__()
+        self.app, self.nav = app, nav
+        t = app.theme
+        self.background_color = t["bg"]
+        self.info = make_label("En cas de problème : « Copier le rapport » puis colle-le dans "
+                               "la conversation avec Claude.", (0, 0, 10, 10), 12, False,
+                               t["sub"], lines=2)
+        self.add_subview(self.info)
+        self.buttons = [
+            make_button("Copier le rapport", (0, 0, 10, 10), lambda s: self.copy(),
+                        t["accent"], size=13),
+            make_button("Partager", (0, 0, 10, 10), lambda s: self.share(), t["field"],
+                        t["accent"], 13),
+            make_button("Effacer", (0, 0, 10, 10), lambda s: self.clear(), t["field"],
+                        "#ff3b30", 13),
+        ]
+        for b in self.buttons:
+            self.add_subview(b)
+        self.tv = ui.TextView()
+        self.tv.editable = False
+        self.tv.font = ("Menlo", 10)
+        self.tv.background_color = t["card"]
+        self.tv.text_color = t["text"]
+        self.add_subview(self.tv)
+
+    def on_show(self):
+        self.tv.text = diagnostic(self.app)
+
+    def layout(self):
+        w, h = self.width, self.height
+        self.info.frame = (14, 6, w - 28, 34)
+        bw = (w - 40) / 3.0
+        for i, b in enumerate(self.buttons):
+            b.frame = (10 + i * (bw + 10), 44, bw, 34)
+        self.tv.frame = (10, 86, w - 20, max(0, h - 96))
+
+    def copy(self):
+        import clipboard
+        clipboard.set(diagnostic(self.app))
+        hud("Rapport copié : colle-le dans la conversation", "success", 1.5)
+
+    @background
+    def share(self):
+        import dialogs
+        dialogs.share_text(diagnostic(self.app))
+
+    @background
+    def clear(self):
+        try:
+            console.alert("Effacer le journal ?", "Le rapport actuel sera perdu.", "Effacer")
+        except KeyboardInterrupt:
+            return
+        for p in (LOG_FILE, CRASH_FILE):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+        log("Journal effacé")
+        on_main(self.on_show)
+
+
 # ====================================================================== rapport de valeur
 def compute_value(app, only):
     if app.busy:
@@ -2503,10 +2835,11 @@ def compute_value(app, only):
             report = build_report(app, labels)
             on_main(show_text, app, "Valeur de la collection", report)
         except Exception as ex:
-            alert("Erreur pendant le calcul", str(ex))
+            log_exception("Erreur pendant le calcul de la valeur")
+            alert("Erreur pendant le calcul", "%s\n\nDétails dans le journal." % ex)
         finally:
             app.busy = False
-    run_thread(work)
+    run_named("calcul", work)
 
 
 def build_report(app, labels):
@@ -2589,11 +2922,34 @@ def show_text(app, title, text):
 
 # ====================================================================== lancement
 def main():
-    app = App()
-    root = AppView(app)
-    root.push(HomeScreen(app, root))
-    root.present("fullscreen")
-    app.start()
+    install_crash_handlers()
+    interrupted = os.path.exists(RUN_MARKER)
+    try:
+        with open(RUN_MARKER, "w") as f:
+            f.write(time.strftime("%d/%m/%Y %H:%M:%S"))
+    except OSError:
+        pass
+    log("===== Démarrage version %s • %s =====" % (APP_VERSION, _device_info()))
+    if interrupted:
+        log("La session précédente ne s'est pas fermée normalement "
+            "(plantage, ou Pythonista fermé de force)", "ALERTE")
+    try:
+        app = App()
+        app.interrupted = interrupted
+        root = AppView(app)
+        root.push(HomeScreen(app, root))
+        root.present("fullscreen")
+        app.start()
+    except Exception:
+        log_exception("Plantage au démarrage")
+        try:
+            console.alert("Plantage au démarrage",
+                          "Le détail est enregistré dans Documents/journal_collection.txt. "
+                          "Ouvre ce fichier dans Pythonista et copie son contenu à Claude.",
+                          "OK", hide_cancel_button=True)
+        except Exception:
+            pass
+        raise
 
 
 if __name__ == "__main__":
