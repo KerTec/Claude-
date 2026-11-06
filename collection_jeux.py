@@ -77,7 +77,8 @@ WEB_TIMEOUT = 35            # délai max de chargement d'une page dans le naviga
 DEFAULT_FX = 0.92           # taux USD→EUR de secours si hors ligne
 BASE = "https://www.pricecharting.com"
 
-APP_VERSION = "3.1 (06/11/2026)"
+APP_VERSION = "3.2 (06/11/2026)"
+UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
 RUN_MARKER = os.path.join(DOCS, ".collection_session_en_cours")
@@ -713,6 +714,36 @@ def run_named(name, fn, *args):
     return t
 
 
+# ====================================================================== mise à jour
+def version_tuple(v):
+    return tuple(int(x) for x in re.findall(r"\d+", (v or "").split("(")[0])[:3])
+
+
+def check_update():
+    """(version, code) si une version plus récente est publiée, sinon None."""
+    import requests
+    r = requests.get(UPDATE_URL, params={"t": int(time.time())}, timeout=20)
+    if r.status_code != 200:
+        raise IOError("HTTP %d" % r.status_code)
+    m = re.search(r'^APP_VERSION = "([^"]+)"', r.text, re.M)
+    if not m:
+        raise IOError("fichier de mise à jour illisible")
+    if version_tuple(m.group(1)) > version_tuple(APP_VERSION):
+        return m.group(1), r.text
+    return None
+
+
+def install_update(code):
+    """Remplace ce script par la nouvelle version (vérifiée avant d'écrire)."""
+    compile(code, "collection_jeux.py", "exec")  # refuse un fichier abîmé
+    path = os.path.abspath(__file__)
+    tmp = path + ".maj"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(code)
+    os.replace(tmp, path)
+    return path
+
+
 # ====================================================================== collection
 class Collection:
     """Jeux possédés, condition par jeu, prix saisis à la main, fiches corrigées."""
@@ -830,20 +861,95 @@ def is_challenge(status, text):
         or "<title>Just a moment" in t or "challenge-platform" in t
 
 
+class VerifySheet(ui.View):
+    """Fenêtre affichée quand PriceCharting demande une vérification « humaine »."""
+
+    def __init__(self, fetcher):
+        super().__init__()
+        self.fetcher = fetcher
+        self.name = "Vérification PriceCharting"
+        self.background_color = "white"
+        self.msg = ui.Label()
+        self.msg.text = ("PriceCharting vérifie que tu n'es pas un robot. Si une case "
+                         "apparaît, touche-la, puis patiente : la fenêtre se fermera "
+                         "toute seule et les prix reprendront.")
+        self.msg.number_of_lines = 0
+        self.msg.font = ("<System>", 14)
+        self.msg.text_color = "#1c1c1e"
+        self.add_subview(self.msg)
+        self.later = ui.Button(title="Plus tard")
+        self.later.font = ("<System-Bold>", 15)
+        self.later.tint_color = "#007aff"
+        self.later.action = lambda s: self.close()
+        self.add_subview(self.later)
+
+    def layout(self):
+        w, h = self.width, self.height
+        self.msg.frame = (14, 6, w - 28, 66)
+        self.later.frame = (w - 120, h - 46, 110, 40)
+        if self.fetcher.box.superview is self:
+            self.fetcher.box.frame = (0, 76, w, max(0, h - 76 - 50))
+
+    def will_close(self):
+        self.fetcher.cancelled = True
+
+
 class WebFetcher:
-    """Navigateur intégré invisible (moteur Safari). Il exécute le JavaScript et passe
-    les vérifications anti-robot que le module requests ne passe pas."""
+    """Navigateur intégré (moteur Safari) caché derrière l'app. Il exécute le JavaScript
+    et garde les cookies : une vérification anti-robot validée une fois reste valable.
+    Si la vérification demande une action, la page est montrée à l'utilisateur."""
 
     def __init__(self, host):
-        self.wv = ui.WebView(frame=(0, 0, 4, 4))
-        self.wv.touch_enabled = False
-        self.wv.alpha = 0.02
+        self.host = host
+        self.box = ui.View()
+        self.box.background_color = "white"
+        self.wv = ui.WebView()
         self.wv.scales_page_to_fit = False
-        host.add_subview(self.wv)
+        self.box.add_subview(self.wv)
+        self.sheet = None
+        self.cancelled = False
+        self.attach_hidden()
+
+    def attach_hidden(self):
+        """Derrière les écrans de l'app : invisible mais actif."""
+        w, h = max(self.host.width, 320), max(self.host.height, 480)
+        parent = self.box.superview
+        if parent is not None and parent is not self.host:
+            try:
+                parent.remove_subview(self.box)
+            except Exception:
+                pass
+        if self.box.superview is None:
+            self.host.add_subview(self.box)
+        self.box.frame = (0, 0, w, h)
+        self.wv.frame = (0, 0, w, h)
+        self.box.touch_enabled = False
         try:
-            host.send_to_back(self.wv)
+            self.host.send_to_back(self.box)
         except Exception:
             pass
+
+    def show_to_user(self):
+        log("Vérification PriceCharting affichée à l'utilisateur", "ALERTE")
+        if self.box.superview is not None:
+            self.box.superview.remove_subview(self.box)
+        self.sheet = VerifySheet(self)
+        self.sheet.add_subview(self.box)
+        self.box.touch_enabled = True
+        self.sheet.present("sheet")
+        self.sheet.layout()
+        self.wv.frame = (0, 0, self.box.width, self.box.height)
+
+    def hide_from_user(self):
+        sheet, self.sheet = self.sheet, None
+        if sheet is not None:
+            if self.box.superview is sheet:
+                sheet.remove_subview(self.box)
+            try:
+                sheet.close()
+            except Exception:
+                pass
+        self.attach_hidden()
 
     def _js(self, code):
         try:
@@ -852,24 +958,41 @@ class WebFetcher:
             return ""
 
     def get(self, url):
+        self.cancelled = False
         self._js("window.__cj_old = 1;")  # repère : disparaît quand la nouvelle page est chargée
         on_main(self.wv.load_url, url)
         start = time.time()
-        time.sleep(1.0)
-        while time.time() - start < WEB_TIMEOUT:
-            ready = self._js("(typeof window.__cj_old === 'undefined' && "
-                             "document.readyState === 'complete') ? 'ok' : ''")
-            if ready == "ok":
+        deadline = start + WEB_TIMEOUT
+        shown = False
+        try:
+            while time.time() < deadline and not self.cancelled:
+                time.sleep(0.7)
+                ready = self._js("(typeof window.__cj_old === 'undefined' && "
+                                 "document.readyState === 'complete') ? 'ok' : ''")
+                if ready != "ok":
+                    continue
                 title = self._js("document.title")
-                if "Just a moment" not in title:
-                    time.sleep(0.3)
-                    page = self._js("document.documentElement.outerHTML")
-                    href = self._js("location.href") or url
-                    if page:
-                        return href, page
-            time.sleep(0.7)
+                if "Just a moment" in title or "Un instant" in title:
+                    # La vérification ne passe pas toute seule : on la montre.
+                    if not shown and time.time() - start > 8:
+                        shown = True
+                        deadline = time.time() + 180
+                        on_main(self.show_to_user)
+                    continue
+                time.sleep(0.3)
+                page = self._js("document.documentElement.outerHTML")
+                href = self._js("location.href") or url
+                if page:
+                    if shown:
+                        log("Vérification PriceCharting réussie")
+                    return href, page
+        finally:
+            if shown:
+                on_main(self.hide_from_user)
+        if self.cancelled:
+            raise Blocked("vérification PriceCharting reportée (« Plus tard »)")
         raise Blocked("le navigateur intégré n'a pas pu charger la page (vérification "
-                      "anti-robot trop longue ou pas de connexion)")
+                      "anti-robot non terminée ou pas de connexion)")
 
 
 class Fetcher:
@@ -951,6 +1074,8 @@ class Fetcher:
             mins = self.blocked_minutes()
             if mins:
                 raise Blocked("PriceCharting est en pause encore %d min" % mins)
+            if self.use_web and self.web is None:
+                self.use_web = False
             if not self.use_web:
                 try:
                     return self._requests_get(url)
@@ -1307,9 +1432,12 @@ class PriceCache:
         self.lock = threading.RLock()
         raw = read_json(CACHE_FILE)
         self.data = raw if isinstance(raw, dict) else {}
-        b = self.data.get("_blocked_until")
+        self.data.pop("_blocked_until", None)  # ancienne version : pause ignorée
+        b = self.data.get("_pause_until")
         if isinstance(b, (int, float)) and b > time.time():
             NET.blocked_until = b  # la pause survit à la fermeture de l'app
+        if self.data.get("_web_mode"):
+            NET.use_web = True     # le site avait bloqué les requêtes directes
 
     def get(self, key):
         e = self.data.get(key)
@@ -1339,7 +1467,8 @@ class PriceCache:
 
     def save(self):
         with self.lock:
-            self.data["_blocked_until"] = NET.blocked_until
+            self.data["_pause_until"] = NET.blocked_until
+            self.data["_web_mode"] = NET.use_web
             try:
                 write_json(CACHE_FILE, dict(self.data))
             except (OSError, TypeError, ValueError) as e:
@@ -1562,6 +1691,7 @@ class App:
         self.fx_checked = False
         self.interrupted = False  # la session précédente s'est-elle mal fermée ?
         self.error_counts = {}
+        self.update = None        # (version, code) si une mise à jour est disponible
         self.number = {l: {g: i + 1 for i, g in enumerate(GAMES_BY[l])} for l in LABELS}
         self.section_of = {l: {} for l in LABELS}
         for l in LABELS:
@@ -1572,6 +1702,25 @@ class App:
     def start(self):
         run_named("prix", self.price_worker)
         run_named("jaquettes", self.covers.worker)
+        run_named("maj", self.update_worker)
+
+    def update_worker(self):
+        time.sleep(3)
+        try:
+            self.update = check_update()
+        except Exception as ex:
+            log("Vérification de mise à jour impossible : %s" % ex, "AVERT")
+            return
+        if self.update:
+            log("Mise à jour disponible : %s" % self.update[0])
+            self.notify()
+
+    def retry_now(self):
+        """Lève la pause : la vérification PriceCharting sera proposée à nouveau."""
+        NET.blocked_until = 0
+        self.prices.save()
+        self.wake.set()
+        self.set_status("Nouvel essai...")
 
     def stop(self):
         log("Fermeture normale de l'app")
@@ -1969,6 +2118,18 @@ class HomeScreen(Screen):
         owned = sum(self.app.coll.count(l) for l in LABELS)
         total = sum(len(GAMES_BY[l]) for l in LABELS)
         value = sum(self.app.console_value(l)[0] for l in LABELS)
+        if self.app.update:
+            sv.add_subview(make_button("⬇︎ Mise à jour %s disponible – installer" %
+                                       self.app.update[0].split(" ")[0],
+                                       (pad, y, w - 2 * pad, 40), lambda s: self.do_update(),
+                                       t["accent"], "white", 13))
+            y += 40 + pad
+        if NET.blocked_minutes():
+            sv.add_subview(make_button("Prix en pause (vérification PriceCharting) – réessayer",
+                                       (pad, y, w - 2 * pad, 40),
+                                       lambda s: (self.app.retry_now(), self.build()),
+                                       "#ff9f0a", "white", 13))
+            y += 40 + pad
         if self.app.interrupted:
             warn = make_button("⚠︎ La dernière session s'est mal fermée – voir le journal",
                                (pad, y, w - 2 * pad, 40), lambda s: self.open_journal(),
@@ -2034,6 +2195,22 @@ class HomeScreen(Screen):
         b.action = lambda s, l=label: self.nav.push(ConsoleScreen(self.app, self.nav, l))
         card.add_subview(b)
         return card
+
+    @background
+    def do_update(self):
+        version, code = self.app.update
+        try:
+            console.alert("Mise à jour %s" % version,
+                          "Installer la nouvelle version ? Ta collection est conservée.",
+                          "Installer")
+        except KeyboardInterrupt:
+            return
+        install_update(code)
+        log("Mise à jour %s installée" % version)
+        self.app.update = None
+        on_main(self.build)
+        alert("Mise à jour installée",
+              "Ferme l'app (croix en haut à gauche) puis relance le script avec ▶.")
 
     def open_journal(self):
         self.app.interrupted = False
@@ -2774,6 +2951,10 @@ class JournalScreen(Screen):
             make_button("Effacer", (0, 0, 10, 10), lambda s: self.clear(), t["field"],
                         "#ff3b30", 13),
         ]
+        self.update_btn = make_button("Rechercher une mise à jour (version %s)"
+                                      % APP_VERSION.split(" ")[0], (0, 0, 10, 10),
+                                      lambda s: self.check_update(), t["field"], t["accent"], 13)
+        self.add_subview(self.update_btn)
         for b in self.buttons:
             self.add_subview(b)
         self.tv = ui.TextView()
@@ -2792,7 +2973,32 @@ class JournalScreen(Screen):
         bw = (w - 40) / 3.0
         for i, b in enumerate(self.buttons):
             b.frame = (10 + i * (bw + 10), 44, bw, 34)
-        self.tv.frame = (10, 86, w - 20, max(0, h - 96))
+        self.update_btn.frame = (10, 86, w - 20, 34)
+        self.tv.frame = (10, 128, w - 20, max(0, h - 138))
+
+    @background
+    def check_update(self):
+        hud("Recherche...", "success", 0.6)
+        try:
+            found = check_update()
+        except Exception as ex:
+            alert("Mise à jour", "Impossible de vérifier : %s" % ex)
+            return
+        if not found:
+            alert("Mise à jour", "Tu as déjà la dernière version (%s)." % APP_VERSION)
+            return
+        self.app.update = found
+        self.app.notify()
+        try:
+            console.alert("Mise à jour %s disponible" % found[0],
+                          "Installer maintenant ? Ta collection est conservée.", "Installer")
+        except KeyboardInterrupt:
+            return
+        install_update(found[1])
+        log("Mise à jour %s installée" % found[0])
+        self.app.update = None
+        alert("Mise à jour installée",
+              "Ferme l'app (croix en haut à gauche) puis relance le script avec ▶.")
 
     def copy(self):
         import clipboard
