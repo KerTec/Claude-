@@ -78,8 +78,11 @@ BLOCK_PAUSE = 30 * 60       # pause si même le navigateur intégré est bloqué
 WEB_TIMEOUT = 35            # délai max de chargement d'une page dans le navigateur intégré
 DEFAULT_FX = 0.92           # taux USD→EUR de secours si hors ligne
 BASE = "https://www.pricecharting.com"
+# Page PriceCharting presque vide (recherche sans résultat) : la seule que le navigateur
+# intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
+LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.8 (06/11/2026)"
+APP_VERSION = "3.9 (06/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -970,7 +973,7 @@ class WebFetcher:
 
     def attach_hidden(self):
         """Derrière les écrans de l'app : invisible mais actif."""
-        w, h = max(self.host.width, 320), max(self.host.height, 480)
+        w, h = 320, 480   # petit format : moins de mémoire
         parent = self.box.superview
         if parent is not None and parent is not self.host:
             try:
@@ -1015,7 +1018,7 @@ class WebFetcher:
 
     def open_manually(self):
         """Montre PriceCharting pour faire la vérification soi-même (bouton du Journal)."""
-        self.wv.load_url(BASE)
+        self.wv.load_url(LIGHT_URL)
         self.show_to_user()
         self.sheet.later.title = "Fermer"
 
@@ -1068,15 +1071,13 @@ class WebFetcher:
             time.sleep(0.3)
             res = self._js("window.__cj_res || ''")
         if not res:
-            log("Mode rapide : pas de réponse en 25 s (%s)" % url[-60:], "AVERT")
-            return None
+            raise PriceError("délai dépassé (site trop lent ou pas de connexion)")
         try:
             info = json.loads(res)
         except ValueError:
             return None
         if "err" in info:
-            log("Mode rapide : erreur réseau (%s)" % info["err"][:80], "AVERT")
-            return None
+            raise PriceError("pas de connexion internet (%s)" % info["err"][:60])
         page = self._read_js_text("window.__cj_txt", int(info.get("n") or 0))
         status = int(info.get("s") or 0)
         if is_challenge(status, page) or status in (403, 429, 503):
@@ -1092,11 +1093,15 @@ class WebFetcher:
         return info.get("u") or url, page
 
     def get(self, url):
-        if self._on_site():
+        """Les pages sont toujours TÉLÉCHARGÉES (mode rapide). Le navigateur n'affiche
+        que la page légère LIGHT_URL, pour passer la vérification anti-robot."""
+        for attempt in range(2):
+            if attempt or not self._on_site():
+                self._navigate(LIGHT_URL)     # vérification si besoin (page légère)
             got = self._fetch(url)
             if got:
                 return got
-        return self._navigate(url)
+        raise Blocked("vérification anti-robot non passée")
 
     def _navigate(self, url):
         """Affiche la page dans le navigateur (nécessaire pour la vérification)."""
@@ -1160,6 +1165,7 @@ class Fetcher:
         self.blocked_until = 0.0
         self.use_web = False
         self.web = None
+        self.web_host = None   # fenêtre principale (le navigateur est créé à la demande)
         self._session = None
 
     def session(self):
@@ -1176,6 +1182,31 @@ class Fetcher:
 
     def mode_text(self):
         return "navigateur intégré" if self.use_web else "connexion directe"
+
+    def ensure_web(self):
+        """Crée le navigateur intégré seulement quand il sert (depuis un fil de fond :
+        la création est faite par l'interface)."""
+        if self.web is None and self.web_host is not None:
+            done = threading.Event()
+
+            def make():
+                try:
+                    self.make_web_now()
+                finally:
+                    done.set()
+            on_main(make)
+            done.wait(15)
+        return self.web
+
+    def make_web_now(self):
+        """À appeler depuis l'interface."""
+        if self.web is None and self.web_host is not None:
+            try:
+                self.web = WebFetcher(self.web_host)
+                log("Navigateur intégré créé")
+            except Exception:
+                log_exception("Création du navigateur intégré impossible")
+        return self.web
 
     def _pace(self):
         wait = self.last_request + MIN_GAP + random.uniform(0, 1.5) - time.time()
@@ -1221,13 +1252,13 @@ class Fetcher:
             mins = self.blocked_minutes()
             if mins:
                 raise Blocked("PriceCharting est en pause encore %d min" % mins)
-            if self.use_web and self.web is None:
+            if self.use_web and self.ensure_web() is None:
                 self.use_web = False
             if not self.use_web:
                 try:
                     return self._requests_get(url)
                 except Blocked:
-                    if self.web is None:
+                    if self.ensure_web() is None:
                         self.blocked_until = time.time() + BLOCK_PAUSE
                         log("Requêtes bloquées et pas de navigateur intégré : pause", "ALERTE")
                         raise
@@ -1848,6 +1879,7 @@ class App:
         self.error_counts = {}
         self.update = None        # (version, code) si une mise à jour est disponible
         self.heartbeat = 0.0      # dernier passage de l'interface (détecteur de gel)
+        self.first_beat = 0.0     # premier passage de l'interface
         self.safe_mode = False    # démarrage sans chargement (après plantages répétés)
         self.loading_started = False
         self.events_lock = threading.Lock()
@@ -1862,13 +1894,24 @@ class App:
                     self.section_of[l].setdefault(g, s)
 
     def start(self):
+        run_named("veille", self.freeze_watchdog)
+        run_named("demarrage", self.staged_start)
+
+    def staged_start(self):
+        """Démarre les tâches de fond une par une, seulement quand l'interface tourne
+        normalement depuis quelques secondes (évite la surcharge au lancement)."""
+        while not self.closed and not (self.first_beat and time.time() - self.first_beat > 4):
+            time.sleep(0.5)
+        if self.closed:
+            return
         if self.safe_mode:
             log("MODE SANS ÉCHEC : prix et jaquettes en pause (plantages au démarrage)",
                 "ALERTE")
         else:
             self.start_loading()
-        run_named("maj", self.update_worker)
-        run_named("veille", self.freeze_watchdog)
+        time.sleep(6)
+        if not self.closed:
+            run_named("maj", self.update_worker)
 
     def start_loading(self):
         if self.loading_started:
@@ -1931,7 +1974,6 @@ class App:
                 reported = False
 
     def update_worker(self):
-        time.sleep(3)
         try:
             self.update = check_update()
         except Exception as ex:
@@ -2250,10 +2292,7 @@ class AppView(ui.View):
         self.right = None
         self.line = ui.View(background_color=t["line"])
         self.bar.add_subview(self.line)
-        try:
-            NET.web = WebFetcher(self)
-        except Exception:
-            NET.web = None
+        NET.web_host = self   # le navigateur intégré sera créé seulement s'il sert
 
     def push(self, screen):
         log("Écran : %s" % (screen.title or type(screen).__name__))
@@ -2312,6 +2351,8 @@ class AppView(ui.View):
     def update(self):
         """Appelée par Pythonista 4 fois par seconde, sur le fil de l'interface."""
         self.app.heartbeat = time.time()
+        if not self.app.first_beat:
+            self.app.first_beat = self.app.heartbeat
         drain_main_queue()
         self.app.flush_events()
         for s in list(self.stack):
@@ -3189,7 +3230,7 @@ def diagnostic(app):
             covers, len(app.covers.queue), len(app.covers.failed)),
         "Réseau : %s%s" % (NET.mode_text(), (", en pause %d min" % NET.blocked_minutes())
                            if NET.blocked_minutes() else ""),
-        "Navigateur intégré : %s" % ("disponible" if NET.web else "indisponible"),
+        "Navigateur intégré : %s" % ("actif" if NET.web else "pas encore utilisé"),
         "État : %s" % (app.status or "—"),
     ]
     if errors:
@@ -3258,7 +3299,7 @@ class JournalScreen(Screen):
         self.tv.frame = (10, 168, w - 20, max(0, h - 178))
 
     def verify(self):
-        if NET.web is None:
+        if NET.make_web_now() is None:
             hud("Navigateur intégré indisponible", "error", 1.5)
             return
         NET.web.open_manually()
