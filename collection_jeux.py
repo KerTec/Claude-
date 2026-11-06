@@ -71,14 +71,15 @@ COVER_DIR = os.path.join(DOCS, "jaquettes")
 
 CACHE_VERSION = 3           # change si le format du cache change (l'ancien est ignoré)
 CACHE_TTL = 30 * 24 * 3600  # un prix est gardé 30 jours (les cotes bougent peu)
-ERR_TTL = 6 * 3600          # après un échec sur un jeu, nouvel essai automatique 6 h plus tard
+ERR_TTL = 6 * 3600          # jeu introuvable : nouvel essai automatique 6 h plus tard
+RETRY_SOON = 5 * 60         # erreur passagère (réseau, anti-robot) : nouvel essai 5 min plus tard
 MIN_GAP = 3.5               # au moins 3,5 s (+ 0 à 1,5 s au hasard) entre deux requêtes
 BLOCK_PAUSE = 30 * 60       # pause si même le navigateur intégré est bloqué
 WEB_TIMEOUT = 35            # délai max de chargement d'une page dans le navigateur intégré
 DEFAULT_FX = 0.92           # taux USD→EUR de secours si hors ligne
 BASE = "https://www.pricecharting.com"
 
-APP_VERSION = "3.4 (06/11/2026)"
+APP_VERSION = "3.5 (06/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -751,12 +752,18 @@ def check_update():
 
 
 def script_path():
+    """Emplacement de ce script (Pythonista ne définit pas toujours __file__)."""
+    candidates = []
+    if sys.argv and sys.argv[0]:
+        candidates.append(sys.argv[0])
     try:
-        p = os.path.abspath(__file__)
-        if p.endswith(".py") and os.path.exists(p):
-            return p
+        candidates.append(__file__)
     except NameError:
         pass
+    for p in candidates:
+        p = os.path.abspath(p)
+        if p.endswith(".py") and os.path.exists(p):
+            return p
     return os.path.join(DOCS, "collection_jeux.py")
 
 
@@ -884,9 +891,17 @@ class Blocked(PriceError):
 
 
 def is_challenge(status, text):
+    """Page anti-robot de Cloudflare ? (on regarde le TITRE : les pages normales de
+    PriceCharting contiennent aussi des scripts Cloudflare « challenge-platform »)."""
     t = text[:5000] if text else ""
-    return (status in (403, 503) and ("cf-" in t or "cloudflare" in t.lower())) \
-        or "<title>Just a moment" in t or "challenge-platform" in t
+    m = re.search(r"<title>(.*?)</title>", t, re.S | re.I)
+    title = m.group(1) if m else ""
+    return "Just a moment" in title or "Attention Required" in title or \
+        (status in (403, 503) and "cloudflare" in t.lower())
+
+
+TRANSIENT_RE = re.compile(r"anti-robot|bloqu|pause|connexion|délai|vérification|panne|"
+                          r"navigateur|HTTP 5", re.I)
 
 
 class VerifySheet(ui.View):
@@ -1541,8 +1556,10 @@ class PriceCache:
             return True
         now = time.time()
         err_ts = e.get("err_ts")
-        if isinstance(err_ts, (int, float)) and now - err_ts < ERR_TTL:
-            return False
+        if isinstance(err_ts, (int, float)):
+            wait = RETRY_SOON if TRANSIENT_RE.search(e.get("err") or "") else ERR_TTL
+            if now - err_ts < wait:
+                return False
         if self.has_price(e):
             return now - e.get("ts", 0) > CACHE_TTL
         return True
@@ -1904,14 +1921,13 @@ class App:
         return self.prices.needs_fetch(key)
 
     def next_job(self):
-        """(console, jeu, page complète ?) : fiche ouverte, puis console affichée,
-        puis jeux possédés, puis tout le reste du catalogue (pour les jaquettes)."""
+        """(console, jeu, page complète ?) : fiche ouverte, puis jeux possédés,
+        puis console affichée, puis tout le reste du catalogue (pour les jaquettes)."""
         if self.priority and self._needs(self.priority[0], self.priority[1], True):
             return self.priority + (True,)
-        order = []
+        order = [[(l, g) for l in LABELS for g in self.coll.owned_games(l)]]
         if self.focus:
             order.append([(self.focus, g) for g in GAMES_BY[self.focus]])
-        order.append([(l, g) for l in LABELS for g in self.coll.owned_games(l)])
         order.append([(l, g) for l in LABELS for g in GAMES_BY[l]])
         for group in order:
             for l, g in group:
