@@ -39,6 +39,7 @@ Un problème ? Accueil > « Journal / signaler un problème » > « Copier le ra
 puis colle-le dans la conversation.
 """
 
+import collections
 import csv
 import functools
 import hashlib
@@ -77,7 +78,7 @@ WEB_TIMEOUT = 35            # délai max de chargement d'une page dans le naviga
 DEFAULT_FX = 0.92           # taux USD→EUR de secours si hors ligne
 BASE = "https://www.pricecharting.com"
 
-APP_VERSION = "3.3 (06/11/2026)"
+APP_VERSION = "3.4 (06/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -595,9 +596,25 @@ def run_thread(fn, *args):
     return t
 
 
+# Boîte aux lettres vers l'interface. Les tâches de fond n'appellent JAMAIS ui.* :
+# elles déposent ici, et la fenêtre principale relève la boîte 4 fois par seconde
+# (update_interval), sur le fil de l'interface. Appeler ui.delay depuis un fil de fond
+# fait planter Pythonista (« Aborted » / « Segmentation fault »).
+_MAIN_QUEUE = collections.deque()
+
+
 def on_main(fn, *args):
-    """Exécute fn sur le fil de l'interface (obligatoire pour toucher aux vues)."""
-    ui.delay(lambda: guard(fn)(*args), 0)
+    """Exécute fn sur le fil de l'interface (au prochain relevé, < 0,3 s)."""
+    _MAIN_QUEUE.append((fn, args))
+
+
+def drain_main_queue(limit=40):
+    """Appelée uniquement par la fenêtre principale (fil de l'interface)."""
+    n = 0
+    while _MAIN_QUEUE and n < limit:
+        fn, args = _MAIN_QUEUE.popleft()
+        guard(fn)(*args)
+        n += 1
 
 
 # ====================================================================== journal de bord
@@ -733,10 +750,21 @@ def check_update():
     return None
 
 
+def script_path():
+    try:
+        p = os.path.abspath(__file__)
+        if p.endswith(".py") and os.path.exists(p):
+            return p
+    except NameError:
+        pass
+    return os.path.join(DOCS, "collection_jeux.py")
+
+
 def install_update(code):
     """Remplace ce script par la nouvelle version (vérifiée avant d'écrire)."""
     compile(code, "collection_jeux.py", "exec")  # refuse un fichier abîmé
-    path = os.path.abspath(__file__)
+    path = script_path()
+    log("Installation de la mise à jour dans %s" % path)
     tmp = path + ".maj"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(code)
@@ -895,7 +923,7 @@ class VerifySheet(ui.View):
         if self.fetcher.box.superview is self:
             self.remove_subview(self.fetcher.box)
         self.fetcher.sheet = None
-        ui.delay(self.fetcher.attach_hidden, 0.3)
+        on_main(self.fetcher.attach_hidden)
 
 
 class WebFetcher:
@@ -1712,6 +1740,10 @@ class App:
         self.interrupted = False  # la session précédente s'est-elle mal fermée ?
         self.error_counts = {}
         self.update = None        # (version, code) si une mise à jour est disponible
+        self.events_lock = threading.Lock()
+        self.dirty_games = set()
+        self.dirty_covers = set()
+        self.status_dirty = False
         self.number = {l: {g: i + 1 for i, g in enumerate(GAMES_BY[l])} for l in LABELS}
         self.section_of = {l: {} for l in LABELS}
         for l in LABELS:
@@ -1762,34 +1794,39 @@ class App:
         if view in self.listeners:
             self.listeners.remove(view)
 
+    # Les fils de fond ne font que noter les changements ; flush_events() (fil de
+    # l'interface) les transmet aux écrans, regroupés.
     def notify(self, label=None, game=None):
-        def _do():
-            for v in list(self.listeners):
-                try:
-                    v.on_data(label, game)
-                except Exception:
-                    pass
-        ui.delay(_do, 0)
+        with self.events_lock:
+            self.dirty_games.add((label, game))
 
     def notify_cover(self, url):
-        def _do():
-            for v in list(self.listeners):
-                try:
-                    v.on_cover(url)
-                except Exception:
-                    pass
-        ui.delay(_do, 0)
+        with self.events_lock:
+            self.dirty_covers.add(url)
 
     def set_status(self, text):
-        self.status = text
+        with self.events_lock:
+            self.status = text
+            self.status_dirty = True
 
-        def _do():
-            for v in list(self.listeners):
-                try:
-                    v.on_status(text)
-                except Exception:
-                    pass
-        ui.delay(_do, 0)
+    def flush_events(self):
+        with self.events_lock:
+            games, self.dirty_games = self.dirty_games, set()
+            covers, self.dirty_covers = self.dirty_covers, set()
+            status_dirty, self.status_dirty = self.status_dirty, False
+        if not (games or covers or status_dirty):
+            return
+        if len(games) > 12 or (None, None) in games:
+            games = {(None, None)}           # beaucoup de changements : tout redessiner
+        if len(covers) > 12:
+            covers, games = set(), games | {(None, None)}
+        for v in list(self.listeners):
+            if status_dirty:
+                guard(v.on_status)(self.status)
+            for label, game in games:
+                guard(v.on_data)(label, game)
+            for url in covers:
+                guard(v.on_cover)(url)
 
     # ---------------------------------------------------------- lecture des données
     def entry(self, label, game):
@@ -1991,16 +2028,18 @@ class Screen(ui.View):
         pass
 
     def later(self, fn, delay):
-        """Regroupe les mises à jour rapprochées : fn n'est appelée qu'une fois."""
-        if getattr(self, "_later_pending", False):
+        """Regroupe les mises à jour rapprochées : fn n'est appelée qu'une fois,
+        au bout de « delay » secondes (déclenchée par AppView.update)."""
+        if getattr(self, "_later", None):
             return
-        self._later_pending = True
+        self._later = (time.time() + delay, fn)
 
-        def run():
-            self._later_pending = False
+    def run_due(self):
+        due = getattr(self, "_later", None)
+        if due and time.time() >= due[0]:
+            self._later = None
             if not self.hidden:
-                fn()
-        ui.delay(run, delay)
+                due[1]()
 
 
 # ====================================================================== navigation
@@ -2015,6 +2054,7 @@ class AppView(ui.View):
         self.name = "Ma collection de jeux"
         self.background_color = t["bg"]
         self.stack = []
+        self.update_interval = 0.25  # relève la boîte aux lettres (voir on_main)
         self.bar = ui.View(background_color=t["header"])
         self.add_subview(self.bar)
         self.back = ui.Button(title="‹ Retour")
@@ -2085,7 +2125,15 @@ class AppView(ui.View):
         for s in self.stack:
             s.frame = (0, 44, w, h - 44)
 
+    def update(self):
+        """Appelée par Pythonista 4 fois par seconde, sur le fil de l'interface."""
+        drain_main_queue()
+        self.app.flush_events()
+        for s in list(self.stack):
+            s.run_due()
+
     def will_close(self):
+        self.update_interval = 0
         self.app.stop()
 
 
@@ -2225,12 +2273,9 @@ class HomeScreen(Screen):
                           "Installer")
         except KeyboardInterrupt:
             return
-        install_update(code)
-        log("Mise à jour %s installée" % version)
-        self.app.update = None
-        on_main(self.build)
-        alert("Mise à jour installée",
-              "Ferme l'app (croix en haut à gauche) puis relance le script avec ▶.")
+        if apply_update(version, code):
+            self.app.update = None
+            on_main(self.build)
 
     def open_journal(self):
         self.app.interrupted = False
@@ -2338,9 +2383,9 @@ class ConsoleScreen(Screen):
         self.status.text = text
 
     def on_data(self, label, game):
-        if label != self.label or self.hidden:
+        if self.hidden or (label is not None and label != self.label):
             return
-        if self.sort_index in (1, 2) or self.filter_index:
+        if label is None or self.sort_index in (1, 2) or self.filter_index:
             self.later(self.rebuild, 1.0)  # l'ordre ou le filtre peut changer
             return
         self.update_summary()
@@ -2625,8 +2670,8 @@ class DetailScreen(Screen):
             self.app.priority = None
 
     def on_data(self, label, game):
-        if label == self.label and game == self.game and not self.hidden:
-            self.build()
+        if not self.hidden and (label is None or (label == self.label and game == self.game)):
+            self.later(self.build, 0.2)
 
     def on_cover(self, url):
         if url == self.app.cover_url(self.label, self.game) and not self.hidden:
@@ -2878,6 +2923,24 @@ class DetailScreen(Screen):
         hud("Clé enregistrée" if txt else "Clé supprimée", "success", 0.8)
 
 
+# ====================================================================== mise à jour (interface)
+def apply_update(version, code):
+    """Installe et prévient l'utilisateur ; renvoie True si c'est fait. (fil de fond)"""
+    try:
+        path = install_update(code)
+    except Exception as ex:
+        log_exception("Échec de l'installation de la mise à jour %s" % version)
+        alert("La mise à jour a échoué",
+              "%s\n\nSolution : relance la commande d'installation dans la console "
+              "Pythonista (voir le README)." % ex)
+        return False
+    log("Mise à jour %s installée (%s)" % (version, path))
+    alert("Mise à jour installée",
+          "Version %s installée.\n\nFerme l'app (croix en haut à gauche) puis relance "
+          "le script avec ▶." % version)
+    return True
+
+
 # ====================================================================== journal / diagnostic
 def _tail(path, n):
     try:
@@ -3013,6 +3076,7 @@ class JournalScreen(Screen):
         try:
             found = check_update()
         except Exception as ex:
+            log("Vérification de mise à jour impossible : %s" % ex, "AVERT")
             alert("Mise à jour", "Impossible de vérifier : %s" % ex)
             return
         if not found:
@@ -3025,11 +3089,8 @@ class JournalScreen(Screen):
                           "Installer maintenant ? Ta collection est conservée.", "Installer")
         except KeyboardInterrupt:
             return
-        install_update(found[1])
-        log("Mise à jour %s installée" % found[0])
-        self.app.update = None
-        alert("Mise à jour installée",
-              "Ferme l'app (croix en haut à gauche) puis relance le script avec ▶.")
+        if apply_update(found[0], found[1]):
+            self.app.update = None
 
     def copy(self):
         import clipboard
