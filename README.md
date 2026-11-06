@@ -1,58 +1,33 @@
-# Claude Code (Research Preview) - 0.2.8 with extracted source maps
+# Ma collection de jeux (Pythonista)
 
-# NOTE: I'm not working on this repo, this is the original source. Fork is at https://github.com/dnakov/anon-kode
+Checklist de collection multi-consoles pour **Pythonista 3** (iPhone / iPad) :
+PS2, N64, DS, 3DS, Xbox 360, Wii, GameCube, Switch.
 
+## Installation
+1. Copier `collection_jeux.py` (à la racine du dépôt) dans Pythonista.
+2. Lancer le script (▶).
 
-![](https://img.shields.io/badge/Node.js-18%2B-brightgreen?style=flat-square)
+## Utilisation
+- **Mode cocher** : toucher un jeu le coche / décoche (sauvegarde automatique).
+- **Mode infos & prix** : toucher un jeu ouvre son menu : cocher, copier le nom,
+  voir le prix, saisir son prix, choisir la condition (disque seul / complet / neuf),
+  ouvrir PriceCharting, eBay (ventes réalisées) ou Leboncoin.
+- **Recherche** : par jeu ou par série, sans souci d'accents (« okami » → « Ōkami »).
+- **Exporter** : copie la checklist de la console dans le presse-papiers.
+- **Valeur console / totale** : rapport min / milieu / max + CSV
+  `Documents/valeur_collection.csv` (séparateur `;`, s'ouvre dans Numbers / Excel).
 
-Claude Code is an agentic coding tool that lives in your terminal, understands your codebase, and helps you code faster by executing routine tasks, explaining complex code, and handling git workflows - all through natural language commands.
+## Prix
+- Sans clé API : une requête PriceCharting seulement quand tu touches « Voir le prix »
+  (8 s minimum entre deux requêtes, pause d'1 h si le site bloque). Prix gardés 30 jours.
+- Avec une clé API PriceCharting (abonnement) : chargement automatique.
+  Menu d'un jeu > « Clé API PriceCharting », ou fichier `Documents/pricecharting_token.txt`.
 
-Some of its key capabilities include:
-
-- Edit files and fix bugs across your codebase
-- Answer questions about your code's architecture and logic
-- Execute and fix tests, lint, and other commands
-- Search through git history, resolve merge conflicts, and create commits and PRs
-
-**Learn more in the [official documentation](https://docs.anthropic.com/en/docs/agents/claude-code/introduction)**.
-
-## Get started
-
-<ol>
-  <li>
-    Run the following command in your terminal: <br />
-    <code>npm install -g @anthropic-ai/claude-code</code>
-  </li>
-  <li>
-    Navigate to your project directory and run <code>claude</code>
-  </li>
-  <li>
-    Complete the one-time OAuth process with your Anthropic Console account.
-  </li>
-</ol>
-
-### Research Preview
-
-We're launching Claude Code as a beta product in research preview to learn directly from developers about their experiences collaborating with AI agents. Our aim is to learn more about how developers prefer to collaborate with AI tools, which development workflows benefit most from working with the agent, and how we can make the agent experience more intuitive.
-
-This is an early version of the product experience, and it's likely to evolve as we learn more about developer preferences. Claude Code is an early look into what's possible with agentic coding, and we know there are areas to improve. We plan to enhance tool execution reliability, support for long-running commands, terminal rendering, and Claude's self-knowledge of its capabilities -- as well as many other product experiences -- over the coming weeks.
-
-### Reporting Bugs
-
-We welcome feedback during this beta period. Use the `/bug` command to report issues directly within Claude Code, or file a [GitHub issue](https://github.com/anthropics/claude-code/issues).
-
-### Data collection, usage, and retention
-
-When you use Claude Code, we collect feedback, which includes usage data (such as code acceptance or rejections), associated conversation data, and user feedback submitted via the `/bug` command.
-
-#### How we use your data
-
-We may use feedback to improve our products and services, but we will not train generative models using your feedback from Claude Code. Given their potentially sensitive nature, we store user feedback transcripts for only 30 days.
-
-If you choose to send us feedback about Claude Code, such as transcripts of your usage, Anthropic may use that feedback to debug related issues and improve Claude Code's functionality (e.g., to reduce the risk of similar bugs occurring in the future).
-
-### Privacy safeguards
-
-We have implemented several safeguards to protect your data, including limited retention periods for sensitive information, restricted access to user session data, and clear policies against using feedback for model training.
-
-For full details, please review our [Commercial Terms of Service](https://www.anthropic.com/legal/commercial-terms) and [Privacy Policy](https://www.anthropic.com/legal/privacy).
+## Fichiers (dans Documents/)
+| Fichier | Contenu |
+|---|---|
+| `collection_jeux.json` | jeux possédés, conditions, prix saisis (migration auto depuis `collection_ps2.json`) |
+| `prix_cache.json` | prix déjà consultés |
+| `pricecharting_token.txt` | clé API (facultative) |
+| `valeur_collection.csv` | dernier rapport de valeur |
+| `debug_pricecharting.html` | dernière page non reconnue (diagnostic) |
