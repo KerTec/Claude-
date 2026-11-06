@@ -79,7 +79,7 @@ WEB_TIMEOUT = 35            # délai max de chargement d'une page dans le naviga
 DEFAULT_FX = 0.92           # taux USD→EUR de secours si hors ligne
 BASE = "https://www.pricecharting.com"
 
-APP_VERSION = "3.7 (06/11/2026)"
+APP_VERSION = "3.8 (06/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -965,6 +965,7 @@ class WebFetcher:
         self.sheet = None
         self.cancelled = False
         self.ok_logged = False
+        self.fast_logged = False
         self.attach_hidden()
 
     def attach_hidden(self):
@@ -1024,22 +1025,81 @@ class WebFetcher:
         except Exception:
             return ""
 
-    def _page_html(self):
-        """Récupère le HTML de la page par morceaux de 50 000 caractères
+    def _read_js_text(self, var, total):
+        """Lit une grande chaîne JavaScript par morceaux de 50 000 caractères
         (un seul très gros texte entre le navigateur et Python est risqué)."""
+        parts = []
+        for i in range(0, total, 50000):
+            parts.append(self._js("%s.substr(%d, 50000)" % (var, i)))
+        self._js("%s = null; ''" % var)
+        return "".join(parts)
+
+    def _page_html(self):
         n = self._js("window.__cj_html = document.documentElement.outerHTML; "
                      "String(window.__cj_html.length)")
         try:
-            total = int(n)
+            return self._read_js_text("window.__cj_html", int(n))
         except ValueError:
             return ""
-        parts = []
-        for i in range(0, total, 50000):
-            parts.append(self._js("window.__cj_html.substr(%d, 50000)" % i))
-        self._js("window.__cj_html = null; ''")
-        return "".join(parts)
+
+    def _on_site(self):
+        """Une page PriceCharting (vérification passée) est-elle ouverte ?"""
+        return self._js("location.hostname") == "www.pricecharting.com" and \
+            "Just a moment" not in self._js("document.title")
+
+    def _fetch(self, url):
+        """Mode rapide : télécharge la page depuis la page déjà ouverte (cookies de la
+        vérification inclus) SANS l'afficher : ni images, ni pubs, ni scripts.
+        Renvoie (url finale, html), ou None s'il faut repasser par l'affichage."""
+        started = self._js(
+            "window.__cj_res = null; window.__cj_txt = null;"
+            "fetch(%s, {credentials: 'include'}).then(function (r) {"
+            "  return r.text().then(function (t) {"
+            "    window.__cj_txt = t;"
+            "    window.__cj_res = JSON.stringify({s: r.status, u: r.url, n: t.length});"
+            "  });"
+            "}).catch(function (e) { window.__cj_res = JSON.stringify({err: String(e)}); });"
+            "'ok'" % json.dumps(url))
+        if started != "ok":
+            return None
+        deadline = time.time() + 25
+        res = ""
+        while time.time() < deadline and not res:
+            time.sleep(0.3)
+            res = self._js("window.__cj_res || ''")
+        if not res:
+            log("Mode rapide : pas de réponse en 25 s (%s)" % url[-60:], "AVERT")
+            return None
+        try:
+            info = json.loads(res)
+        except ValueError:
+            return None
+        if "err" in info:
+            log("Mode rapide : erreur réseau (%s)" % info["err"][:80], "AVERT")
+            return None
+        page = self._read_js_text("window.__cj_txt", int(info.get("n") or 0))
+        status = int(info.get("s") or 0)
+        if is_challenge(status, page) or status in (403, 429, 503):
+            log("Mode rapide : nouvelle vérification anti-robot demandée", "AVERT")
+            return None                     # → affichage de la page (vérification)
+        if status == 404:
+            raise PriceError("page introuvable (404)")
+        if status != 200:
+            raise PriceError("erreur HTTP %d" % status)
+        if not self.fast_logged:
+            self.fast_logged = True
+            log("Navigateur intégré : mode rapide actif (pages téléchargées sans affichage)")
+        return info.get("u") or url, page
 
     def get(self, url):
+        if self._on_site():
+            got = self._fetch(url)
+            if got:
+                return got
+        return self._navigate(url)
+
+    def _navigate(self, url):
+        """Affiche la page dans le navigateur (nécessaire pour la vérification)."""
         self.cancelled = False
         self._js("window.__cj_old = 1;")  # repère : disparaît quand la nouvelle page est chargée
         on_main(self.wv.load_url, url)
@@ -1582,7 +1642,8 @@ class PriceCache:
         err_ts = e.get("err_ts")
         if isinstance(err_ts, (int, float)):
             if e.get("poison"):
-                wait = POISON_TTL
+                # nouvelle version de l'app : on retente une fois (le correctif peut aider)
+                wait = POISON_TTL if e.get("poison_v") == APP_VERSION else 0
             elif TRANSIENT_RE.search(e.get("err") or ""):
                 wait = RETRY_SOON
             else:
@@ -1832,6 +1893,7 @@ class App:
         e = self.prices.get(key)
         if e:
             e["poison"] = True
+            e["poison_v"] = APP_VERSION
         self.prices.save()
         log("Jeu mis de côté car il a fait planter l'app : %s" % key, "ALERTE")
 
