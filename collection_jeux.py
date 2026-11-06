@@ -79,11 +79,14 @@ WEB_TIMEOUT = 35            # délai max de chargement d'une page dans le naviga
 DEFAULT_FX = 0.92           # taux USD→EUR de secours si hors ligne
 BASE = "https://www.pricecharting.com"
 
-APP_VERSION = "3.6 (06/11/2026)"
+APP_VERSION = "3.7 (06/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
 RUN_MARKER = os.path.join(DOCS, ".collection_session_en_cours")
+JOB_FILE = os.path.join(DOCS, ".collection_chargement_en_cours")  # jeu en cours de chargement
+STARTS_FILE = os.path.join(DOCS, ".collection_demarrages")        # plantages au démarrage
+POISON_TTL = 7 * 24 * 3600  # jeu qui a fait planter l'app : mis de côté 7 jours
 LOG_MAX = 400000            # au-delà, le journal est raccourci (on garde la fin)
 
 # ====================================================================== catalogue
@@ -1021,6 +1024,21 @@ class WebFetcher:
         except Exception:
             return ""
 
+    def _page_html(self):
+        """Récupère le HTML de la page par morceaux de 50 000 caractères
+        (un seul très gros texte entre le navigateur et Python est risqué)."""
+        n = self._js("window.__cj_html = document.documentElement.outerHTML; "
+                     "String(window.__cj_html.length)")
+        try:
+            total = int(n)
+        except ValueError:
+            return ""
+        parts = []
+        for i in range(0, total, 50000):
+            parts.append(self._js("window.__cj_html.substr(%d, 50000)" % i))
+        self._js("window.__cj_html = null; ''")
+        return "".join(parts)
+
     def get(self, url):
         self.cancelled = False
         self._js("window.__cj_old = 1;")  # repère : disparaît quand la nouvelle page est chargée
@@ -1044,7 +1062,7 @@ class WebFetcher:
                         on_main(self.show_to_user)
                     continue
                 time.sleep(0.3)
-                page = self._js("document.documentElement.outerHTML")
+                page = self._page_html()
                 href = self._js("location.href") or url
                 if page:
                     if shown:
@@ -1563,7 +1581,12 @@ class PriceCache:
         now = time.time()
         err_ts = e.get("err_ts")
         if isinstance(err_ts, (int, float)):
-            wait = RETRY_SOON if TRANSIENT_RE.search(e.get("err") or "") else ERR_TTL
+            if e.get("poison"):
+                wait = POISON_TTL
+            elif TRANSIENT_RE.search(e.get("err") or ""):
+                wait = RETRY_SOON
+            else:
+                wait = ERR_TTL
             if now - err_ts < wait:
                 return False
         if self.has_price(e):
@@ -1764,6 +1787,8 @@ class App:
         self.error_counts = {}
         self.update = None        # (version, code) si une mise à jour est disponible
         self.heartbeat = 0.0      # dernier passage de l'interface (détecteur de gel)
+        self.safe_mode = False    # démarrage sans chargement (après plantages répétés)
+        self.loading_started = False
         self.events_lock = threading.Lock()
         self.dirty_games = set()
         self.dirty_covers = set()
@@ -1776,17 +1801,57 @@ class App:
                     self.section_of[l].setdefault(g, s)
 
     def start(self):
-        run_named("prix", self.price_worker)
-        run_named("jaquettes", self.covers.worker)
+        if self.safe_mode:
+            log("MODE SANS ÉCHEC : prix et jaquettes en pause (plantages au démarrage)",
+                "ALERTE")
+        else:
+            self.start_loading()
         run_named("maj", self.update_worker)
         run_named("veille", self.freeze_watchdog)
+
+    def start_loading(self):
+        if self.loading_started:
+            return
+        self.loading_started = True
+        run_named("prix", self.price_worker)
+        run_named("jaquettes", self.covers.worker)
+
+    def leave_safe_mode(self):
+        log("Action : sortie du mode sans échec")
+        self.safe_mode = False
+        self.start_loading()
+        self.notify()
+
+    def set_poison(self, key):
+        """Le jeu en cours de chargement a fait planter l'app : on le met de côté."""
+        if "|" not in key:
+            return
+        self.prices.record_error(key, "a fait planter l'app pendant son chargement : mis de "
+                                      "côté 7 jours (« Corriger la fiche » ou « Saisir mon "
+                                      "prix » possibles)")
+        e = self.prices.get(key)
+        if e:
+            e["poison"] = True
+        self.prices.save()
+        log("Jeu mis de côté car il a fait planter l'app : %s" % key, "ALERTE")
 
     def freeze_watchdog(self):
         """Si l'interface ne répond plus (gel), note ce que fait chaque fil AVANT
         qu'iOS ne tue l'app : un gel laisse ainsi une trace dans le journal."""
         reported = False
+        started = time.time()
+        stable = False
         while not self.closed:
             time.sleep(2)
+            if self.closed:
+                break
+            write_marker(started)            # « l'app est toujours en vie »
+            if not stable and time.time() - started > 60:
+                stable = True                # 1 min sans plantage : compteur remis à 0
+                try:
+                    write_json(STARTS_FILE, {"early": 0})
+                except OSError:
+                    pass
             if not self.heartbeat:
                 continue
             frozen = time.time() - self.heartbeat
@@ -2008,6 +2073,11 @@ class App:
         label, game, full = job
         key = key_of(label, game)
         self.loading = (label, game)
+        try:
+            with open(JOB_FILE, "w", encoding="utf-8") as f:
+                f.write(key)                 # si l'app plante maintenant, on saura sur quoi
+        except OSError:
+            pass
         left = self.remaining()
         self.set_status("Chargement %s : %s  (encore %d)" % (label, game, left))
         try:
@@ -2024,6 +2094,10 @@ class App:
         if full and self.priority == (label, game):
             self.priority = None
         self.loading = None
+        try:
+            os.remove(JOB_FILE)
+        except OSError:
+            pass
         self.prices.save()
         url = self.cover_url(label, game)
         if url:
@@ -2235,6 +2309,13 @@ class HomeScreen(Screen):
         owned = sum(self.app.coll.count(l) for l in LABELS)
         total = sum(len(GAMES_BY[l]) for l in LABELS)
         value = sum(self.app.console_value(l)[0] for l in LABELS)
+        if self.app.safe_mode:
+            sv.add_subview(make_button("Mode sans échec (plantages au démarrage). Copie le "
+                                       "rapport du Journal, puis touche ici pour reprendre",
+                                       (pad, y, w - 2 * pad, 52),
+                                       lambda s: (self.app.leave_safe_mode(), self.build()),
+                                       "#ff3b30", "white", 13))
+            y += 52 + pad
         if self.app.update:
             sv.add_subview(make_button("⬇︎ Mise à jour %s disponible – installer" %
                                        self.app.update[0].split(" ")[0],
@@ -3270,21 +3351,50 @@ def show_text(app, title, text):
 
 
 # ====================================================================== lancement
+def write_marker(started):
+    """Fichier « session en cours » : début et dernier signe de vie de l'app."""
+    try:
+        write_json(RUN_MARKER, {"start": started, "alive": time.time()})
+    except OSError:
+        pass
+
+
 def main():
     install_crash_handlers()
     interrupted = os.path.exists(RUN_MARKER)
+    previous = read_json(RUN_MARKER) if interrupted else None
+    poison = None
+    if interrupted:
+        try:
+            with open(JOB_FILE, "r", encoding="utf-8") as f:
+                poison = f.read().strip()
+        except OSError:
+            pass
+    # Plantage « tôt » = la session précédente a duré moins de 25 s.
+    early = isinstance(previous, dict) and \
+        previous.get("alive", 0) - previous.get("start", 0) < 25
+    starts = read_json(STARTS_FILE)
+    count = (starts.get("early", 0) if isinstance(starts, dict) else 0) + 1 if early else 0
     try:
-        with open(RUN_MARKER, "w") as f:
-            f.write(time.strftime("%d/%m/%Y %H:%M:%S"))
+        write_json(STARTS_FILE, {"early": count})
     except OSError:
         pass
+    write_marker(time.time())
     log("===== Démarrage version %s • %s =====" % (APP_VERSION, _device_info()))
     if interrupted:
         log("La session précédente ne s'est pas fermée normalement "
-            "(plantage, ou Pythonista fermé de force)", "ALERTE")
+            "(plantage, ou Pythonista fermé de force)%s"
+            % (" après moins de 25 s (%d fois de suite)" % count if early else ""), "ALERTE")
     try:
         app = App()
         app.interrupted = interrupted
+        app.safe_mode = count >= 2
+        if poison:
+            app.set_poison(poison)
+        try:
+            os.remove(JOB_FILE)
+        except OSError:
+            pass
         root = AppView(app)
         root.push(HomeScreen(app, root))
         root.present("fullscreen")
