@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.21 (09/11/2026)"
+APP_VERSION = "3.22 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -642,9 +642,18 @@ def strip_accents(text):
     return "".join(c for c in text if not unicodedata.combining(c))
 
 
+_NORM = {}
+
+
 def normalize(text):
-    """Pour la recherche : « okami » trouve « Ōkami », « pokemon » trouve « Pokémon »."""
-    return strip_accents(text.replace("’", "'")).casefold()
+    """Pour la recherche : « okami » trouve « Ōkami », « pokemon » trouve « Pokémon ».
+    Résultat gardé en mémoire (recherche instantanée sur des milliers de jeux)."""
+    r = _NORM.get(text)
+    if r is None:
+        r = strip_accents(text.replace("’", "'")).casefold()
+        if len(_NORM) < 50000:
+            _NORM[text] = r
+    return r
 
 
 def search_name(game):
@@ -2212,23 +2221,44 @@ class CoverStore:
         téléchargées (celles qui sont sorties de l'écran sont retirées de la file)."""
         with self.lock:
             self.queue = [u for u in urls
-                          if u and u not in self.failed and not os.path.exists(self.path(u))]
+                          if u and u not in self.failed and not self.has(u)]
         if self.queue:
             self.event.set()
 
-    @staticmethod
-    def path(url, grey=False):
-        h = hashlib.md5(url.encode("utf-8")).hexdigest()
-        return os.path.join(COVER_DIR, h + ("_g" if grey else "") + ".jpg")
+    _paths = {}
+    _files = None
+
+    @classmethod
+    def path(cls, url, grey=False):
+        k = (url, grey)
+        p = cls._paths.get(k)
+        if p is None:
+            h = hashlib.md5(url.encode("utf-8")).hexdigest()
+            p = cls._paths[k] = os.path.join(COVER_DIR, h + ("_g" if grey else "") + ".jpg")
+        return p
+
+    @classmethod
+    def has_file(cls, p):
+        """Fichier présent ? (liste du dossier lue une fois, puis tenue à jour en mémoire :
+        plus d'accès disque à chaque défilement)."""
+        if cls._files is None:
+            try:
+                cls._files = set(os.path.join(COVER_DIR, f) for f in os.listdir(COVER_DIR))
+            except OSError:
+                cls._files = set()
+        return p in cls._files
+
+    def has(self, url, grey=False):
+        return bool(url) and self.has_file(self.path(url, grey))
 
     def local(self, url, grey=False):
         """Chemin du fichier s'il existe déjà, sinon None (et demande le téléchargement)."""
         if not url:
             return None
         p = self.path(url, grey)
-        if os.path.exists(p):
+        if self.has_file(p):
             return p
-        if grey and os.path.exists(self.path(url)):
+        if grey and self.has(url):
             return None  # couleur dispo mais pas de gris (pas de PIL) : l'appelant atténue
         self.want(url)
         return None
@@ -2236,7 +2266,7 @@ class CoverStore:
     def want(self, url):
         """Jaquette demandée en priorité (fiche ouverte)."""
         with self.lock:
-            if url in self.failed or os.path.exists(self.path(url)):
+            if url in self.failed or self.has(url):
                 return
             if url in self.urgent:
                 self.urgent.remove(url)
@@ -2256,7 +2286,7 @@ class CoverStore:
                     url = self.queue.pop(0)          # à l'écran d'abord, puis à côté
                 else:
                     url = None
-            if url and os.path.exists(self.path(url)):
+            if url and self.has(url):
                 continue
             if not url:
                 self.save_colors()
@@ -2272,6 +2302,10 @@ class CoverStore:
                     f.write(r.content)
                 color = self._make_grey(tmp, self.path(url, True))
                 os.replace(tmp, self.path(url))
+                CoverStore.has_file(self.path(url))
+                CoverStore._files.add(self.path(url))
+                if os.path.exists(self.path(url, True)):
+                    CoverStore._files.add(self.path(url, True))
                 if color:
                     self.colors[url] = color
                     self.colors_dirty += 1
@@ -2464,6 +2498,7 @@ class App:
         self.error_counts = {}
         self.update = None        # (version, code) si une mise à jour est disponible
         self.heartbeat = 0.0      # dernier passage de l'interface (détecteur de gel)
+        self.user_busy_until = 0.0  # défilement en cours : le chargement patiente
         self.first_beat = 0.0     # premier passage de l'interface
         self.last_prices_save = time.time()
         self.added_dirty = False  # prix d'ajout figés à enregistrer
@@ -2940,6 +2975,8 @@ class App:
 
     def _price_step(self):
         """Une étape : un jeu chargé (ou une attente)."""
+        while time.time() < self.user_busy_until and not self.closed:
+            time.sleep(0.15)                 # défilement en cours : fluidité d'abord
         if self.pause_if_background():
             return
         if NET.blocked_minutes():
@@ -3531,9 +3568,12 @@ class ConsoleScreen(Screen):
 
     def on_theme(self):
         """Nouveau thème : les jaquettes visibles reprennent la bonne transparence."""
-        for v in self.live.values():
+        for v in list(self.live.values()) + self.pool:
+            if isinstance(v, Tile):
+                v.t_last.clear()
+        for i, v in list(self.live.items()):
             if isinstance(v, Tile) and v.t_game:
-                v.t_show_cover()
+                v.t_fill(self.label, v.t_game, self.frames[i])
 
     def on_cover(self, url):
         if self.hidden:
@@ -3546,7 +3586,8 @@ class ConsoleScreen(Screen):
     # ---------------------------------------------------------- contrôles
     def textfield_did_change(self, tf):
         self.query = tf.text or ""
-        self.rebuild()
+        self._later = None
+        self.later(self.rebuild, 0.25)       # pas de recalcul à chaque lettre
 
     def textfield_should_return(self, tf):
         tf.end_editing()
@@ -3687,6 +3728,7 @@ class ConsoleScreen(Screen):
         self.empty.hidden = not show
 
     def scrollview_did_scroll(self, sv):
+        self.app.user_busy_until = time.time() + 0.8   # le chargement laisse la priorité
         self.render_visible()
 
     def indices_between(self, y0, y1):
@@ -3702,7 +3744,12 @@ class ConsoleScreen(Screen):
         """Affiche les cases à l'écran (+ une petite marge), recycle les autres, et
         demande le téléchargement des seules jaquettes à l'écran puis juste après."""
         off, h = self.scroll.content_offset[1], self.scroll.height
-        need = set(self.indices_between(off - 150, off + h + 250))
+        rng = self.indices_between(off - 150, off + h + 250)
+        key = (rng.start, rng.stop, len(self.items))
+        if key == getattr(self, "last_rng", None) and len(self.live) == len(rng):
+            return                       # mêmes cases à l'écran : rien à refaire
+        self.last_rng = key
+        need = set(rng)
         for i in list(self.live):
             if i not in need:
                 self.release(i)
@@ -3745,7 +3792,7 @@ class ConsoleScreen(Screen):
                 continue
             owned = self.app.coll.is_owned(self.label, game)
             p = self.app.covers.path(url, grey=not owned)
-            if p in IMAGE_CACHE or not os.path.exists(p):
+            if p in IMAGE_CACHE or not CoverStore.has_file(p):
                 continue
             load_image(p)
             done += 1
@@ -3816,6 +3863,7 @@ class Tile(ui.View):
         super().__init__()
         t = app.theme
         self.t_app, self.t_on_tap, self.t_game, self.t_size = app, on_tap, None, None
+        self.t_last = {}
         self.background_color = t["card"]
         self.corner_radius = 10
         self.t_ph = ui.View()                      # couleur d'attente
@@ -3854,30 +3902,41 @@ class Tile(ui.View):
         self.t_btn.frame = (0, 0, w, h)
         self.t_size = (w, h)
 
+    def t_set(self, view, attr, value):
+        """Ne touche une propriété iOS que si sa valeur change : chaque modification
+        traverse le pont Python → iOS, coûteux pendant le défilement."""
+        k = (id(view), attr)
+        if self.t_last.get(k, self) != value:
+            self.t_last[k] = value
+            setattr(view, attr, value)
+
     def t_fill(self, label, game, frame):
         app, t = self.t_app, self.t_app.theme
-        self.frame = frame
+        sv = self.t_set
+        sv(self, "frame", frame)
         if self.t_size != (frame[2], frame[3]):
             self.t_place(frame[2], frame[3])
         self.t_console, self.t_game = label, game
         owned = app.coll.is_owned(label, game)
         rar = app.rarity(label, game)
         price = app.price(label, game)
-        self.border_width = 2 if owned else 0.5
-        self.border_color = (rar[3] if rar else t["owned"]) if owned else t["line"]
-        self.t_num.text = "#%03d" % app.num(label, game)
-        self.t_ok_box.hidden = not owned
-        self.t_title.text = game
-        self.t_title.font = ("<System-Bold>" if owned else "<System>", 11)
-        self.t_title.text_color = t["text"] if owned else t["sub"]
+        sv(self, "border_width", 2 if owned else 0.5)
+        sv(self, "border_color", (rar[3] if rar else t["owned"]) if owned else t["line"])
+        sv(self.t_num, "text", "#%03d" % app.num(label, game))
+        sv(self.t_ok_box, "hidden", not owned)
+        sv(self.t_title, "text", game)
+        sv(self.t_title, "font", ("<System-Bold>" if owned else "<System>", 11))
+        sv(self.t_title, "text_color", t["text"] if owned else t["sub"])
         if price:
-            self.t_price.text = ("✎ " if price.get("manual") else "") + eur_short(price["mid"])
+            ptxt = ("✎ " if price.get("manual") else "") + eur_short(price["mid"])
         else:
-            self.t_price.text = "prix ?" if app.error_of(label, game) else "…"
-        d = app.delta(label, game)
-        self.t_delta.text, self.t_delta.text_color = delta_text(d, short=True)
-        self.t_stars.text = "★" * rar[2] if rar else ""
-        self.t_stars.text_color = rar[3] if rar else t["sub"]
+            ptxt = "prix ?" if app.error_of(label, game) else "…"
+        sv(self.t_price, "text", ptxt)
+        dtxt, dcol = delta_text(app.delta(label, game), short=True)
+        sv(self.t_delta, "text", dtxt)
+        sv(self.t_delta, "text_color", dcol)
+        sv(self.t_stars, "text", "★" * rar[2] if rar else "")
+        sv(self.t_stars, "text_color", rar[3] if rar else t["sub"])
         self.t_show_cover()
 
     def t_cover_path(self):
@@ -3888,9 +3947,9 @@ class Tile(ui.View):
         if not url:
             return None, False
         p = app.covers.path(url, grey=not owned)
-        if os.path.exists(p):
+        if CoverStore.has_file(p):
             return p, False
-        if not owned and os.path.exists(app.covers.path(url)):
+        if not owned and app.covers.has(url):
             return app.covers.path(url), True      # pas de version grise : couleur atténuée
         return None, False
 
@@ -4594,6 +4653,10 @@ def write_marker(started):
 
 
 def main():
+    try:
+        sys.setswitchinterval(0.002)   # l'interface récupère la main plus vite
+    except Exception:
+        pass
     install_crash_handlers()
     interrupted = os.path.exists(RUN_MARKER)
     previous = read_json(RUN_MARKER) if interrupted else None
