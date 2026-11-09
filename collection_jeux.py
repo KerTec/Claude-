@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.22 (09/11/2026)"
+APP_VERSION = "3.23 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -2369,13 +2369,34 @@ NON_GAME = {"console", "system", "controller", "memory", "adapter", "cable", "he
             "wheel", "microphone", "keyboard", "mouse", "faceplate", "battery", "dock",
             "stylus", "sensor", "amiibo", "figure", "statue", "soundtrack", "artbook",
             "poster", "skin", "case", "sleeve", "stand", "headphones", "vr", "move"}
-VARIANT_SKIP = re.compile(r"\[[^\]]*(demo|promo|resale|press|kiosk|disc only|manual)[^\]]*\]",
-                          re.I)
+VARIANT_SKIP = re.compile(r"\[[^\]]*(demo|promo|resale|press|kiosk|disc only|manual|bundle|"
+                          r"console|starter|pack)[^\]]*\]|\bslim\b|\bstarter pack\b|"
+                          r"\bmetallic\b|^\s*playstation \d (?!all)|\s\+\s", re.I)
+
+
+# Mentions d'édition / réédition qui ne changent pas le jeu (supprimées pour comparer).
+_EDITION_RE = re.compile(
+    r"\[[^\]]*\]|\([^)]*\)|\b(?:platinum|essentials|classics|greatest hits|playstation hits|"
+    r"player'?s? choice|nintendo selects|xbox classics|game of the year|goty|collector'?s|"
+    r"limited|special|deluxe|gold|complete|definitive|ultimate|premium|day one|launch|"
+    r"anniversary|standard|steelbook|director'?s cut|bundle copy|not for resale|"
+    r"edition|version)\b", re.I)
+_CANON = {}
 
 
 def base_key(title):
-    """Titre sans la variante entre crochets ([Platinum], [Essentials]...)."""
-    return frozenset(title_tokens(re.sub(r"\[.*?\]", " ", title)))
+    """Clé anti-doublon : titre normalisé (accents, &/and, II/2, tirets, « The »...)
+    sans les mentions d'édition. « God of War [Platinum] », « God of War - Greatest
+    Hits » et « God of War » ont la même clé. Gardée en mémoire (ultra rapide)."""
+    k = _CANON.get(title)
+    if k is None:
+        k = _CANON[title] = frozenset(title_tokens(_EDITION_RE.sub(" ", normalize(title))))
+    return k
+
+
+def _plainness(title):
+    """Plus c'est petit, plus le titre est « l'édition normale » (à préférer)."""
+    return (len(_EDITION_RE.findall(normalize(title))), len(title))
 
 
 class FullCatalog:
@@ -2395,10 +2416,28 @@ class FullCatalog:
             raw = read_json(self.path(label))
             d = raw if isinstance(raw, dict) and isinstance(raw.get("rows"), list) else \
                 {"rows": [], "form": None, "done": False, "ts": 0}
-            d["by"] = {r[0]: i for i, r in enumerate(d["rows"])}
-            d["bases"] = {base_key(r[0]): i for i, r in enumerate(d["rows"])}
             self.data[label] = d
+            self.compact(label)
         return d
+
+    def compact(self, label, extra_titles=()):
+        """Retire les doublons (y compris ceux d'une ancienne version du filtre) et les
+        jeux déjà dans la sélection. Une seule passe, par dictionnaire."""
+        d = self.get(label)
+        sel = self.selection_keys(label) | set(base_key(t) for t in extra_titles)
+        keep, bases = [], {}
+        for r in d["rows"]:
+            k = base_key(r[0])
+            if not k or k in sel:
+                continue
+            i = bases.get(k)
+            if i is None:
+                bases[k] = len(keep)
+                keep.append(r)
+            elif _plainness(r[0]) < _plainness(keep[i][0]):
+                keep[i] = r                   # on garde l'édition normale
+        d["rows"], d["bases"] = keep, bases
+        d["by"] = {r[0]: i for i, r in enumerate(keep)}
 
     def names(self, label):
         return [r[0] for r in self.get(label)["rows"]]
@@ -2419,8 +2458,15 @@ class FullCatalog:
 
     def selection_keys(self, label):
         if label not in self.sel_keys:
-            self.sel_keys[label] = set(base_key(n) for g in GAMES_BY[label]
-                                       for n, k in name_variants(g) if k == 1.0)
+            keys = set()
+            for g in GAMES_BY[label]:
+                for n, k in name_variants(g):
+                    # titre court (sans sous-titre) seulement s'il a un numéro : « Metal Gear
+                    # Solid 2 » = « Metal Gear Solid 2: Sons of Liberty »
+                    if k == 1.0 or re.search(r"\d", n):
+                        keys.add(base_key(n))
+            keys.discard(frozenset())
+            self.sel_keys[label] = keys
         return self.sel_keys[label]
 
     def add_page(self, label, rows, form, first):
@@ -2439,7 +2485,7 @@ class FullCatalog:
                 continue                      # déjà dans la sélection
             if base in d["bases"]:                # recherche directe (plus de boucle sur tout)
                 i = d["bases"][base]
-                if "[" in d["rows"][i][0] and "[" not in title:
+                if _plainness(title) < _plainness(d["rows"][i][0]):
                     old = d["rows"][i][0]     # on préfère l'édition normale à [Platinum]
                     d["rows"][i] = [title, r["url"], r["guide"].get("Disque seul"),
                                     r["guide"].get("Complet"), r["guide"].get("Neuf"), r["img"]]
@@ -2552,6 +2598,16 @@ class App:
         self.start_loading()
         self.notify()
 
+    def matched_titles(self, label):
+        """Titres PriceCharting trouvés pour les jeux de la sélection : leurs variantes
+        n'apparaissent pas une 2e fois dans le catalogue complet."""
+        out = []
+        for g in GAMES_BY[label]:
+            e = self.prices.get(key_of(label, g))
+            if e and e.get("title"):
+                out.append(e["title"])
+        return out
+
     def full_step(self, label):
         """Une page du catalogue complet (150 jeux)."""
         d = self.full.get(label)
@@ -2567,6 +2623,7 @@ class App:
             time.sleep(10)
             return
         added = self.full.add_page(label, rows, nxt, first)
+        self.full.compact(label, self.matched_titles(label))
         if nxt is None:
             log("Catalogue complet %s : %d jeux" % (label, len(d["rows"])))
             self.set_status("Catalogue complet %s : %d jeux" % (label, len(d["rows"])))
@@ -3600,6 +3657,7 @@ class ConsoleScreen(Screen):
     def scope_changed(self, sender):
         self.complete = sender.selected_index == 1
         if self.complete:
+            self.app.full.compact(self.label, self.app.matched_titles(self.label))
             self.app.full_wanted.add(self.label)
             self.app.wake.set()
         self.rebuild()
