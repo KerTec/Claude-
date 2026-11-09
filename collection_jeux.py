@@ -57,7 +57,7 @@ import time
 import traceback
 import unicodedata
 import webbrowser
-from urllib.parse import quote_plus, urlencode
+from urllib.parse import quote, quote_plus, urlencode
 
 import console
 import ui
@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.28 (09/11/2026)"
+APP_VERSION = "3.29 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -720,6 +720,26 @@ CONSOLES = [
     ("Saturn", "Saturn", SATURN, "pal-sega-saturn", "PAL Sega Saturn"),
     ("DC", "Dreamcast", DREAMCAST, "pal-sega-dreamcast", "PAL Sega Dreamcast"),
 ]
+
+# Icônes officielles de RetroArch (thème XMB « Monochrome »), dépôt libretro/retroarch-assets,
+# licence Creative Commons BY 4.0 (auteurs : équipe libretro / contributeurs RetroArch).
+RA_ICON_BASE = "https://raw.githubusercontent.com/libretro/retroarch-assets/master/xmb/monochrome/png/"
+RA_ICONS = {
+    "NES": "Nintendo - Nintendo Entertainment System",
+    "SNES": "Nintendo - Super Nintendo Entertainment System",
+    "GB": "Nintendo - Game Boy", "GBC": "Nintendo - Game Boy Color",
+    "GBA": "Nintendo - Game Boy Advance", "N64": "Nintendo - Nintendo 64",
+    "GC": "Nintendo - GameCube", "Wii": "Nintendo - Wii", "Switch": "Nintendo - Switch",
+    "Switch2": "Nintendo - Switch", "DS": "Nintendo - Nintendo DS",
+    "3DS": "Nintendo - Nintendo 3DS", "MS": "Sega - Master System - Mark III",
+    "MD": "Sega - Mega Drive - Genesis", "GG": "Sega - Game Gear", "Saturn": "Sega - Saturn",
+    "DC": "Sega - Dreamcast", "PS1": "Sony - PlayStation", "PS2": "Sony - PlayStation 2",
+    "PS3": "Sony - PlayStation 3", "PS4": "Sony - PlayStation 4", "PS5": "Sony - PlayStation 4",
+    "Xbox": "Microsoft - Xbox", "360": "Microsoft - Xbox 360", "One": "Microsoft - Xbox One",
+    "Series": "Microsoft - Xbox One",
+}
+RA_CREDIT = ("Icônes des consoles : RetroArch / libretro (retroarch-assets, thème Monochrome), "
+             "licence CC BY 4.0")
 
 # Couleur de chaque famille (sélecteur de consoles).
 FAMILY_COLORS = {"Rétro 2D": "#8e44ad", "Nintendo": "#e60012", "PlayStation": "#0070d1",
@@ -2556,6 +2576,11 @@ def load_image(path):
 
 
 # ====================================================================== photos des consoles
+def console_icon_url(label):
+    name = RA_ICONS.get(label)
+    return RA_ICON_BASE + quote(name) + ".png" if name else None
+
+
 def pick_console_photo(rows):
     """Photo de la console : la ligne « ... Console / System » la plus simple
     (sans manette, sans édition limitée si possible)."""
@@ -3198,9 +3223,6 @@ class App:
             for g in self.coll.owned_games(l):
                 if self._needs(l, g):
                     return l, g, False
-        for l in LABELS:
-            if self.photo_needed(l):
-                return l, None, "photo"
         for l in ([self.focus] if self.focus in self.full_wanted else []) + \
                 sorted(self.full_wanted):
             if not self.full.done(l):
@@ -3618,15 +3640,15 @@ class HomeScreen(Screen):
 
     def on_cover(self, url):
         for label in list(getattr(self, "photo_refs", {})):
-            if self.app.console_photo(label) == url:
+            if console_icon_url(label) == url:
                 self.show_photo(label)
 
     def show_photo(self, label):
-        """Photo de la console si elle est téléchargée, sinon son sigle en couleur."""
+        """Icône RetroArch de la console si elle est téléchargée, sinon son sigle."""
         iv, ph = self.photo_refs.get(label, (None, None))
         if iv is None:
             return
-        url = self.app.console_photo(label)
+        url = console_icon_url(label)
         path = self.app.covers.path(url) if url else None
         img = load_image(path) if path and CoverStore.has_file(path) else None
         if url and not img:
@@ -3654,7 +3676,7 @@ class HomeScreen(Screen):
         t = self.app.theme
         for label in list(getattr(self, "photo_refs", {})):
             iv, _ = self.photo_refs[label]
-            if iv.hidden and self.app.console_photo(label):
+            if iv.hidden:
                 self.show_photo(label)
         for label, (cnt, fill, sub, track_w) in self.card_refs.items():
             got, pct, text = self.card_texts(label)
@@ -3765,6 +3787,9 @@ class HomeScreen(Screen):
             row.content_size = (pad * 2 + len(labels) * (cw + gap) - gap, ch + 8)
             sv.add_subview(row)
             y += ch + 26
+        sv.add_subview(make_label(RA_CREDIT, (pad, y, w - 2 * pad, 30), 10, False, t["sub"],
+                                  "center", 2))
+        y += 40
         sv.content_size = (w, y)
         self.built_sig = self.layout_sig()
 
@@ -3777,11 +3802,11 @@ class HomeScreen(Screen):
         stripe = ui.View(frame=(18, 0, w - 36, 4), background_color=color)
         stripe.corner_radius = 2
         card.add_subview(stripe)
-        box = ui.View(frame=(8, 12, w - 16, 112), background_color=t["field"])
+        box = ui.View(frame=(8, 12, w - 16, 112), background_color=color)
         box.corner_radius = 12
-        ph = make_label(label, (0, 30, w - 16, 52), 28, True, color, "center")
+        ph = make_label(label, (0, 30, w - 16, 52), 28, True, "white", "center")
         box.add_subview(ph)
-        iv = ui.ImageView(frame=(6, 6, w - 28, 100))
+        iv = ui.ImageView(frame=(14, 10, w - 44, 92))
         iv.content_mode = ui.CONTENT_SCALE_ASPECT_FIT
         box.add_subview(iv)
         card.add_subview(box)
