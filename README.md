@@ -59,4 +59,4 @@ Accueil > « Journal / signaler un problème » > « Copier le rapport », puis 
 | `pricecharting_token.txt` | clé API PriceCharting (facultative) |
 
 ## Crédits
-Icônes des consoles : [RetroArch / libretro – retroarch-assets](https://github.com/libretro/retroarch-assets) (thème XMB Monochrome), licence [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+Images des consoles : [RetroArch / libretro – retroarch-assets](https://github.com/libretro/retroarch-assets) (thème XMB Systematic), licence [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).

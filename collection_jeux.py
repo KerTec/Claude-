@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.29 (09/11/2026)"
+APP_VERSION = "3.30 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -721,24 +721,25 @@ CONSOLES = [
     ("DC", "Dreamcast", DREAMCAST, "pal-sega-dreamcast", "PAL Sega Dreamcast"),
 ]
 
-# Icônes officielles de RetroArch (thème XMB « Monochrome »), dépôt libretro/retroarch-assets,
+# Images des consoles de RetroArch (thème XMB « Systematic »), dépôt libretro/retroarch-assets,
 # licence Creative Commons BY 4.0 (auteurs : équipe libretro / contributeurs RetroArch).
-RA_ICON_BASE = "https://raw.githubusercontent.com/libretro/retroarch-assets/master/xmb/monochrome/png/"
+RA_ICON_BASE = "https://raw.githubusercontent.com/libretro/retroarch-assets/master/xmb/systematic/png/"
 RA_ICONS = {
     "NES": "Nintendo - Nintendo Entertainment System",
     "SNES": "Nintendo - Super Nintendo Entertainment System",
     "GB": "Nintendo - Game Boy", "GBC": "Nintendo - Game Boy Color",
     "GBA": "Nintendo - Game Boy Advance", "N64": "Nintendo - Nintendo 64",
     "GC": "Nintendo - GameCube", "Wii": "Nintendo - Wii", "Switch": "Nintendo - Switch",
-    "Switch2": "Nintendo - Switch", "DS": "Nintendo - Nintendo DS",
+    "Switch2": "Nintendo - Switch 2", "DS": "Nintendo - Nintendo DS",
     "3DS": "Nintendo - Nintendo 3DS", "MS": "Sega - Master System - Mark III",
     "MD": "Sega - Mega Drive - Genesis", "GG": "Sega - Game Gear", "Saturn": "Sega - Saturn",
     "DC": "Sega - Dreamcast", "PS1": "Sony - PlayStation", "PS2": "Sony - PlayStation 2",
-    "PS3": "Sony - PlayStation 3", "PS4": "Sony - PlayStation 4", "PS5": "Sony - PlayStation 4",
+    "PS3": "Sony - PlayStation 3 (PSN)", "PS4": "Sony - PlayStation 4",
+    "PS5": "Sony - PlayStation 5",
     "Xbox": "Microsoft - Xbox", "360": "Microsoft - Xbox 360", "One": "Microsoft - Xbox One",
-    "Series": "Microsoft - Xbox One",
+    "Series": "Microsoft - Xbox Series X",
 }
-RA_CREDIT = ("Icônes des consoles : RetroArch / libretro (retroarch-assets, thème Monochrome), "
+RA_CREDIT = ("Images des consoles : RetroArch / libretro (retroarch-assets, thème Systematic), "
              "licence CC BY 4.0")
 
 # Couleur de chaque famille (sélecteur de consoles).
@@ -3802,11 +3803,11 @@ class HomeScreen(Screen):
         stripe = ui.View(frame=(18, 0, w - 36, 4), background_color=color)
         stripe.corner_radius = 2
         card.add_subview(stripe)
-        box = ui.View(frame=(8, 12, w - 16, 112), background_color=color)
+        box = ui.View(frame=(8, 12, w - 16, 112), background_color=t["field"])
         box.corner_radius = 12
-        ph = make_label(label, (0, 30, w - 16, 52), 28, True, "white", "center")
+        ph = make_label(label, (0, 30, w - 16, 52), 28, True, color, "center")
         box.add_subview(ph)
-        iv = ui.ImageView(frame=(14, 10, w - 44, 92))
+        iv = ui.ImageView(frame=(10, 8, w - 36, 96))
         iv.content_mode = ui.CONTENT_SCALE_ASPECT_FIT
         box.add_subview(iv)
         card.add_subview(box)
