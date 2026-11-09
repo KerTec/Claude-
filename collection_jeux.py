@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.26 (09/11/2026)"
+APP_VERSION = "3.27 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -721,6 +721,9 @@ CONSOLES = [
     ("DC", "Dreamcast", DREAMCAST, "pal-sega-dreamcast", "PAL Sega Dreamcast"),
 ]
 
+# Couleur de chaque famille (sélecteur de consoles).
+FAMILY_COLORS = {"Rétro 2D": "#8e44ad", "Nintendo": "#e60012", "PlayStation": "#0070d1",
+                 "Sega": "#1e5bc6", "Xbox": "#107c10"}
 # Familles affichées sur l'accueil (ordre d'affichage).
 FAMILIES = [
     ("Rétro 2D", ["NES", "SNES", "GB", "GBC", "GBA", "MS", "MD", "GG"]),
@@ -1887,9 +1890,9 @@ def exact_key(name):
     return frozenset(title_tokens(name))
 
 
-def fetch_console_list(label, form=None):
+def fetch_console_list(label, form=None, us=False):
     """Une page de la liste d'une console (form=None : la 1re page)."""
-    slug, _ = PC[label]
+    slug = US_PC[label][0] if us else PC[label][0]
     url = BASE + "/console/" + slug
     _, page = NET.get(url, data=form) if form else NET.get(url)
     return parse_console_page(page, slug)
@@ -2550,6 +2553,23 @@ def load_image(path):
     return img
 
 
+# ====================================================================== photos des consoles
+def pick_console_photo(rows):
+    """Photo de la console : la ligne « ... Console / System » la plus simple
+    (sans manette, sans édition limitée si possible)."""
+    best = None
+    for r in rows:
+        t = r["title"]
+        if not r.get("img") or not re.search(r"\b(console|system)\b", t, re.I):
+            continue
+        if re.search(r"controller|manette|pad\b|adapter|cable|memory", t, re.I):
+            continue
+        score = (("[" in t) + ("bundle" in t.lower()) + ("edition" in t.lower()), len(t))
+        if best is None or score < best[0]:
+            best = (score, r["img"])
+    return best[1] if best else None
+
+
 # ====================================================================== catalogue complet
 NON_GAME = {"console", "system", "controller", "memory", "adapter", "cable", "headset",
             "strategy", "guide", "manual", "kiosk", "camera", "remote", "charger", "steering",
@@ -3028,6 +3048,41 @@ class App:
         r = self.full.row(label, game)
         return r[5] if r else None
 
+    def console_photo(self, label):
+        rec = (self.prices.data.get("_console_img") or {}).get(label)
+        return rec.get("url") if isinstance(rec, dict) else None
+
+    def set_console_photo(self, label, url):
+        with self.prices.lock:
+            self.prices.data.setdefault("_console_img", {})[label] = {"url": url,
+                                                                      "ts": time.time()}
+        if url:
+            self.covers.want(url)
+
+    def photo_needed(self, label):
+        rec = (self.prices.data.get("_console_img") or {}).get(label)
+        if not isinstance(rec, dict):
+            return True
+        return not rec.get("url") and time.time() - rec.get("ts", 0) > 7 * 24 * 3600
+
+    def photo_step(self, label):
+        """Photo d'une console (1re page de sa liste PriceCharting)."""
+        self.set_status("Photo de la console %s..." % FULL_NAME[label])
+        try:
+            rows, _ = fetch_console_list(label)
+        except Exception as ex:
+            log("Photo de la console %s : %s" % (label, ex), "AVERT")
+            rows = []
+        url = pick_console_photo(rows)
+        if not url:                          # pas de photo en PAL : version US
+            try:
+                url = pick_console_photo(fetch_console_list(label, us=True)[0])
+            except Exception:
+                url = None
+        self.set_console_photo(label, url)
+        self.save_prices_soon()
+        self.notify()
+
     def num(self, label, game):
         n = self.number[label].get(game)
         if n is None:
@@ -3141,6 +3196,9 @@ class App:
             for g in self.coll.owned_games(l):
                 if self._needs(l, g):
                     return l, g, False
+        for l in LABELS:
+            if self.photo_needed(l):
+                return l, None, "photo"
         for l in ([self.focus] if self.focus in self.full_wanted else []) + \
                 sorted(self.full_wanted):
             if not self.full.done(l):
@@ -3180,6 +3238,8 @@ class App:
             self.set_status("Chargement rapide %s : page %d/%d (%d jeux trouvés)"
                             % (label, page_no, BULK_PAGES, found))
             rows, form = fetch_console_list(label, form)
+            if page_no == 1 and self.photo_needed(label):
+                self.set_console_photo(label, pick_console_photo(rows))
             for row in rows:
                 g = wanted.get(exact_key(row["title"]))
                 if g is None or not any(row["guide"].values()):
@@ -3276,6 +3336,9 @@ class App:
             return
         if full == "complet":
             self.full_step(label)
+            return
+        if full == "photo":
+            self.photo_step(label)
             return
         key = key_of(label, game)
         self.loading = (label, game)
@@ -3551,6 +3614,25 @@ class HomeScreen(Screen):
         if not self.hidden:
             self.later(self.refresh_values, 0.8)
 
+    def on_cover(self, url):
+        for label in list(getattr(self, "photo_refs", {})):
+            if self.app.console_photo(label) == url:
+                self.show_photo(label)
+
+    def show_photo(self, label):
+        """Photo de la console si elle est téléchargée, sinon son sigle en couleur."""
+        iv, ph = self.photo_refs.get(label, (None, None))
+        if iv is None:
+            return
+        url = self.app.console_photo(label)
+        path = self.app.covers.path(url) if url else None
+        img = load_image(path) if path and CoverStore.has_file(path) else None
+        if url and not img:
+            self.app.covers.want(url)
+        iv.image = img
+        iv.hidden = img is None
+        ph.hidden = img is not None
+
     def layout_sig(self):
         return (self.width, self.app.safe_mode, bool(self.app.update),
                 bool(NET.blocked_minutes()), self.app.interrupted)
@@ -3568,6 +3650,10 @@ class HomeScreen(Screen):
         count_lbl.text = "%d / %d jeux" % (owned, total)
         value_lbl.text = "Valeur estimée : %s" % eur(value)
         t = self.app.theme
+        for label in list(getattr(self, "photo_refs", {})):
+            iv, _ = self.photo_refs[label]
+            if iv.hidden and self.app.console_photo(label):
+                self.show_photo(label)
         for label, (cnt, fill, sub, track_w) in self.card_refs.items():
             got, pct, text = self.card_texts(label)
             cnt.text = "%d / %d" % (got, len(GAMES_BY[label]))
@@ -3654,43 +3740,66 @@ class HomeScreen(Screen):
                                      lambda s: self.open_journal(), t["field"], t["sub"], 13))
         sv.add_subview(card)
         y += 172 + pad
-        # --- consoles rangées par famille, en cartes compactes (2 par ligne sur iPhone)
-        cols = max(2, int((w - pad) // 190))
-        cw = (w - pad * (cols + 1)) / cols
-        ch, gap = 84, 10
+        # --- sélecteur façon RetroArch : une rangée horizontale par famille, avec la
+        # photo de chaque console
+        cw, ch, gap = 148, 214, 12
+        self.photo_refs = {}
         for family, labels in FAMILIES:
-            sv.add_subview(make_label(family.upper(), (pad + 4, y, w, 18), 12, True, t["sub"]))
-            y += 24
+            color = FAMILY_COLORS.get(family, t["accent"])
+            dot = ui.View(frame=(pad + 2, y + 5, 8, 8), background_color=color)
+            dot.corner_radius = 4
+            sv.add_subview(dot)
+            got = sum(self.app.coll.count(l) for l in labels)
+            sv.add_subview(make_label("%s   %d jeux" % (family.upper(), got) if got else
+                                      family.upper(), (pad + 16, y, w, 18), 13, True, t["sub"]))
+            y += 26
+            row = ui.ScrollView(frame=(0, y, w, ch + 8))
+            row.shows_horizontal_scroll_indicator = False
+            row.always_bounce_horizontal = True
+            row.indicator_style = t["indicator"]
             for i, label in enumerate(labels):
-                col = i % cols
-                if col == 0 and i:
-                    y += ch + gap
-                x = pad + col * (cw + pad)
-                sv.add_subview(self.console_card(label, FULL_NAME[label], (x, y, cw, ch)))
-            y += ch + 18
+                row.add_subview(self.console_card(label, FULL_NAME[label],
+                                                  (pad + i * (cw + gap), 2, cw, ch), color))
+            row.content_size = (pad * 2 + len(labels) * (cw + gap) - gap, ch + 8)
+            sv.add_subview(row)
+            y += ch + 26
         sv.content_size = (w, y)
         self.built_sig = self.layout_sig()
 
-    def console_card(self, label, full, frame):
+    def console_card(self, label, full, frame, color):
+        """Carte d'une console : photo, nom, progression (sélecteur façon RetroArch)."""
         t = self.app.theme
         x, y, w, h = frame
         card = ui.View(frame=frame, background_color=t["card"])
-        card.corner_radius = 12
+        card.corner_radius = 16
+        stripe = ui.View(frame=(18, 0, w - 36, 4), background_color=color)
+        stripe.corner_radius = 2
+        card.add_subview(stripe)
+        box = ui.View(frame=(8, 12, w - 16, 112), background_color=t["field"])
+        box.corner_radius = 12
+        ph = make_label(label, (0, 30, w - 16, 52), 28, True, color, "center")
+        box.add_subview(ph)
+        iv = ui.ImageView(frame=(6, 6, w - 28, 100))
+        iv.content_mode = ui.CONTENT_SCALE_ASPECT_FIT
+        box.add_subview(iv)
+        card.add_subview(box)
+        self.photo_refs[label] = (iv, ph)
+        self.show_photo(label)
         got, pct, text = self.card_texts(label)
-        card.add_subview(make_label(full, (12, 9, w - 24, 20), 15, True, t["text"]))
-        cnt = make_label("%d / %d" % (got, len(GAMES_BY[label])), (12, 30, w - 24, 18), 13,
-                         True, t["owned"] if got else t["sub"])
+        card.add_subview(make_label(full, (8, 130, w - 16, 20), 14, True, t["text"], "center"))
+        cnt = make_label("%d / %d" % (got, len(GAMES_BY[label])), (8, 152, w - 16, 18), 13,
+                         True, t["owned"] if got else t["sub"], "center")
         card.add_subview(cnt)
-        track = ui.View(frame=(12, 52, w - 24, 6), background_color=t["field"])
+        track = ui.View(frame=(16, 176, w - 32, 6), background_color=t["field"])
         track.corner_radius = 3
-        fill = ui.View(frame=(0, 0, max(6, (w - 24) * pct), 6), background_color=t["owned"])
+        fill = ui.View(frame=(0, 0, max(6, (w - 32) * pct), 6), background_color=color)
         fill.corner_radius = 3
         fill.hidden = not got
         track.add_subview(fill)
         card.add_subview(track)
-        sub = make_label(text, (12, 62, w - 24, 16), 11, False, t["sub"])
+        sub = make_label(text, (8, 188, w - 16, 16), 11, False, t["sub"], "center")
         card.add_subview(sub)
-        self.card_refs[label] = (cnt, fill, sub, w - 24)
+        self.card_refs[label] = (cnt, fill, sub, w - 32)
         b = ui.Button(frame=(0, 0, w, h))
         b.action = lambda s, l=label: self.nav.push(ConsoleScreen(self.app, self.nav, l))
         card.add_subview(b)
