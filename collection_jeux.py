@@ -89,7 +89,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.14 (09/11/2026)"
+APP_VERSION = "3.15 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -1961,19 +1961,77 @@ def stars(n):
 
 
 # ====================================================================== thème
-def make_theme():
-    dark = False
+def ui_style():
     try:
-        dark = ui.get_ui_style() == "dark"
+        return "dark" if ui.get_ui_style() == "dark" else "light"
     except Exception:
-        pass
-    if dark:
-        return {"bg": "#000000", "card": "#1c1c1e", "field": "#2c2c2e", "text": "#f2f2f7",
-                "sub": "#98989f", "line": "#38383a", "owned": "#32d74b", "accent": "#0a84ff",
-                "status": "#ff9f0a", "header": "#1c1c1e", "placeholder": "#2c2c2e"}
-    return {"bg": "#f2f2f7", "card": "#ffffff", "field": "#e5e5ea", "text": "#1c1c1e",
-            "sub": "#6e6e73", "line": "#d1d1d6", "owned": "#248a3d", "accent": "#007aff",
-            "status": "#c76a00", "header": "#ffffff", "placeholder": "#e5e5ea"}
+        return "light"
+
+
+THEMES = {
+    "dark": {"bg": "#000000", "card": "#1c1c1e", "field": "#2c2c2e", "text": "#f2f2f7",
+             "sub": "#98989f", "line": "#38383a", "owned": "#32d74b", "accent": "#0a84ff",
+             "status": "#ff9f0a", "header": "#1c1c1e", "placeholder": "#2c2c2e",
+             "indicator": "white", "style": "dark"},
+    "light": {"bg": "#f2f2f7", "card": "#ffffff", "field": "#e5e5ea", "text": "#1c1c1e",
+              "sub": "#6e6e73", "line": "#d1d1d6", "owned": "#248a3d", "accent": "#007aff",
+              "status": "#c76a00", "header": "#ffffff", "placeholder": "#e5e5ea",
+              "indicator": "black", "style": "light"},
+}
+
+
+def make_theme(style=None):
+    """Couleurs de l'app selon le mode clair/sombre de l'iPhone (ui.get_ui_style)."""
+    return dict(THEMES[style or ui_style()])
+
+
+def _rgba_key(color):
+    """Couleur -> clé comparable (Pythonista rend les couleurs en tuples RGBA)."""
+    try:
+        c = ui.parse_color(color) if isinstance(color, str) else tuple(color)
+        return tuple(int(round(x * 255)) for x in c[:4])
+    except Exception:
+        return None
+
+
+# Couleurs du thème utilisées comme FOND et comme TEXTE. Séparées pour qu'un texte blanc
+# (bouton bleu, numéro « #001 »...) ne soit jamais pris pour le fond blanc d'une carte.
+BG_KEYS = ("bg", "card", "field", "line", "header", "placeholder", "owned", "accent")
+TEXT_KEYS = ("text", "sub", "owned", "accent", "status", "line")
+ATTR_KEYS = {"background_color": BG_KEYS, "border_color": BG_KEYS + TEXT_KEYS,
+             "text_color": TEXT_KEYS, "tint_color": TEXT_KEYS}
+
+
+def theme_mappings(old, new):
+    out = {}
+    for attr, keys in ATTR_KEYS.items():
+        m = {}
+        for k in keys:
+            key = _rgba_key(old[k])
+            if key is not None:
+                m.setdefault(key, new[k])
+        out[attr] = m
+    return out
+
+
+def recolor(view, mappings, indicator):
+    """Remplace dans toutes les vues les couleurs de l'ancien thème par celles du nouveau.
+    Les couleurs qui ne dépendent pas du thème (rareté, bandeaux, blanc) ne bougent pas."""
+    for attr, mapping in mappings.items():
+        try:
+            value = getattr(view, attr)
+        except Exception:
+            continue
+        key = _rgba_key(value) if value is not None else None
+        if key in mapping:
+            try:
+                setattr(view, attr, mapping[key])
+            except Exception:
+                pass
+    if isinstance(view, ui.ScrollView):
+        view.indicator_style = indicator
+    for sub in list(getattr(view, "subviews", []) or []):
+        recolor(sub, mappings, indicator)
 
 
 # ====================================================================== jaquettes
@@ -2754,12 +2812,27 @@ class AppView(ui.View):
         self.app.heartbeat = time.time()
         if not self.app.first_beat:
             self.app.first_beat = self.app.heartbeat
+        self.ticks = getattr(self, "ticks", 0) + 1
+        if self.ticks % 8 == 0 and ui_style() != self.app.theme["style"]:
+            self.switch_theme(ui_style())   # l'iPhone est passé en mode nuit (ou jour)
         drain_main_queue()
         self.app.flush_events()
         for s in list(self.stack):
             s.run_due()
         if self.stack and hasattr(self.stack[-1], "idle"):
             self.stack[-1].idle()
+
+    def switch_theme(self, style):
+        """Change de thème en direct, sans relancer l'app."""
+        old = dict(self.app.theme)
+        new = make_theme(style)
+        self.app.theme.clear()
+        self.app.theme.update(new)        # les vues créées ensuite prennent le nouveau thème
+        recolor(self, theme_mappings(old, new), new["indicator"])
+        for s in list(self.stack):
+            if hasattr(s, "on_theme"):
+                s.on_theme()
+        log("Thème %s appliqué en direct" % ("sombre" if style == "dark" else "clair"))
 
     def will_close(self):
         self.update_interval = 0
@@ -2777,6 +2850,7 @@ class HomeScreen(Screen):
         self.background_color = app.theme["bg"]
         self.bar_button = ("Exporter", lambda s: self.export())
         self.scroll = ui.ScrollView()
+        self.scroll.indicator_style = app.theme["indicator"]
         self.scroll.always_bounce_vertical = True
         self.add_subview(self.scroll)
         self.status = make_label("", (0, 0, 10, 10), 11, False, app.theme["status"])
@@ -3044,6 +3118,7 @@ class ConsoleScreen(Screen):
         self.add_subview(self.status)
 
         self.scroll = ui.ScrollView()
+        self.scroll.indicator_style = app.theme["indicator"]
         self.scroll.delegate = self
         self.scroll.always_bounce_vertical = True
         self.add_subview(self.scroll)
@@ -3066,6 +3141,12 @@ class ConsoleScreen(Screen):
             return
         self.update_summary()
         self.redraw_game(game)
+
+    def on_theme(self):
+        """Nouveau thème : les jaquettes visibles reprennent la bonne transparence."""
+        for v in self.live.values():
+            if isinstance(v, Tile) and v.t_game:
+                v.t_show_cover()
 
     def on_cover(self, url):
         if self.hidden:
@@ -3405,7 +3486,9 @@ class Tile(ui.View):
         img = load_image(path) if path else None
         if img:
             self.t_img.image = img
-            self.t_img.alpha = 1.0 if owned else (0.35 if dim else 0.55)
+            dark = t.get("style") == "dark"   # sur fond noir, une jaquette grise doit rester visible
+            self.t_img.alpha = 1.0 if owned else ((0.5 if dark else 0.35) if dim else
+                                                  (0.8 if dark else 0.55))
             self.t_img.hidden = False
             self.t_ph.hidden = True
             return
@@ -3415,7 +3498,7 @@ class Tile(ui.View):
         url = app.cover_url(self.t_console, self.t_game)
         color = app.covers.color(url, grey=not owned)
         self.t_ph.background_color = color or t["placeholder"]
-        self.t_ph.alpha = 1.0 if owned or not color else 0.55
+        self.t_ph.alpha = 1.0 if owned or not color else (0.8 if t.get("style") == "dark" else 0.55)
         loading = app.loading == (self.t_console, self.t_game) or (url and not color)
         self.t_ph_label.text = "" if color else ("…" if loading or not app.error_of(
             self.t_console, self.t_game) else "?")
@@ -3436,6 +3519,7 @@ class DetailScreen(Screen):
         self.screen_title = "#%03d  %s" % (app.number[label][game], label)
         self.background_color = app.theme["bg"]
         self.scroll = ui.ScrollView()
+        self.scroll.indicator_style = app.theme["indicator"]
         self.scroll.always_bounce_vertical = True
         self.add_subview(self.scroll)
 
@@ -4126,7 +4210,8 @@ def main():
             pass
         root = AppView(app)
         root.push(HomeScreen(app, root))
-        root.present("fullscreen")
+        root.present("fullscreen", title_bar_color=app.theme["header"],
+                     title_color=app.theme["text"])
         app.start()
     except Exception:
         log_exception("Plantage au démarrage")
