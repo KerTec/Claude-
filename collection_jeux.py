@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.25 (09/11/2026)"
+APP_VERSION = "3.26 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -667,6 +667,30 @@ DREAMCAST = [
     ]),
 ]
 
+
+SWITCH2 = [
+    ("Top 7 Switch 2", [
+        "Mario Kart World", "Donkey Kong Bananza", "Pokémon Legends: Z-A",
+        "Metroid Prime 4: Beyond", "Kirby Air Riders", "Hyrule Warriors: Age of Imprisonment",
+        "The Legend of Zelda: Tears of the Kingdom (Switch 2)"
+    ]),
+    ("Éditions Nintendo Switch 2", [
+        "The Legend of Zelda: Breath of the Wild - Nintendo Switch 2 Edition",
+        "Kirby and the Forgotten Land + Star-Crossed World",
+        "Super Mario Party Jamboree + Jamboree TV", "Fire Emblem: Fortune's Weave",
+        "Yoshi and the Mysterious Book", "Mario Tennis Fever", "Splatoon Raiders",
+        "Pokémon Pokopia", "Star Fox"
+    ]),
+    ("Autres incontournables Switch 2", [
+        "Cyberpunk 2077: Ultimate Edition", "Elden Ring: Tarnished Edition",
+        "Final Fantasy VII Remake Intergrade", "Final Fantasy VII Rebirth",
+        "Indiana Jones and the Great Circle", "Hades II", "Resident Evil Requiem",
+        "Street Fighter 6: Years 1-2 Fighters Edition", "Dragon Quest I & II HD-2D Remake",
+        "Star Wars Outlaws",
+        "Assassin's Creed Shadows", "Sonic X Shadow Generations"
+    ]),
+]
+
 # (étiquette courte, nom complet, sections, slug PriceCharting, nom console PriceCharting)
 CONSOLES = [
     ("PS2", "PlayStation 2", PS2, "pal-playstation-2", "PAL Playstation 2"),
@@ -677,6 +701,7 @@ CONSOLES = [
     ("Wii", "Wii", WII, "pal-wii", "PAL Wii"),
     ("GC", "GameCube", GC, "pal-gamecube", "PAL Gamecube"),
     ("Switch", "Nintendo Switch", SWITCH, "pal-nintendo-switch", "PAL Nintendo Switch"),
+    ("Switch2", "Nintendo Switch 2", SWITCH2, "pal-nintendo-switch-2", "PAL Nintendo Switch 2"),
     ("PS3", "PlayStation 3", PS3, "pal-playstation-3", "PAL Playstation 3"),
     ("PS4", "PlayStation 4", PS4, "pal-playstation-4", "PAL Playstation 4"),
     ("PS5", "PlayStation 5", PS5, "pal-playstation-5", "PAL Playstation 5"),
@@ -699,7 +724,7 @@ CONSOLES = [
 # Familles affichées sur l'accueil (ordre d'affichage).
 FAMILIES = [
     ("Rétro 2D", ["NES", "SNES", "GB", "GBC", "GBA", "MS", "MD", "GG"]),
-    ("Nintendo", ["N64", "GC", "Wii", "Switch", "DS", "3DS"]),
+    ("Nintendo", ["N64", "GC", "Wii", "Switch", "Switch2", "DS", "3DS"]),
     ("PlayStation", ["PS1", "PS2", "PS3", "PS4", "PS5"]),
     ("Sega", ["Saturn", "DC"]),
     ("Xbox", ["Xbox", "360", "One", "Series"]),
@@ -754,6 +779,7 @@ US_PC = {
     "Wii": ("wii", "Wii"),
     "GC": ("gamecube", "Gamecube"),
     "Switch": ("nintendo-switch", "Nintendo Switch"),
+    "Switch2": ("nintendo-switch-2", "Nintendo Switch 2"),
     "PS3": ("playstation-3", "Playstation 3"),
     "PS4": ("playstation-4", "Playstation 4"),
     "PS5": ("playstation-5", "Playstation 5"),
