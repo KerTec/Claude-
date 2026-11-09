@@ -82,7 +82,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.9 (06/11/2026)"
+APP_VERSION = "3.10 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -1850,11 +1850,29 @@ class CoverStore:
             pass
 
 
+IMAGE_CACHE = collections.OrderedDict()   # chemin -> ui.Image (les plus récentes)
+IMAGE_CACHE_MAX = 60
+
+
 def load_image(path):
-    try:
-        return ui.Image.named(path) if path else None
-    except Exception:
+    """Jaquette en mémoire, avec un cache limité aux 60 dernières.
+    (ui.Image.named garderait TOUTES les jaquettes en mémoire jusqu'à la fermeture :
+    ~70 Mo pour tout le catalogue, de quoi pousser iOS à fermer l'app.)"""
+    if not path:
         return None
+    img = IMAGE_CACHE.pop(path, None)
+    if img is None:
+        try:
+            with open(path, "rb") as f:
+                img = ui.Image.from_data(f.read())
+        except Exception:
+            return None
+        if img is None:
+            return None
+    IMAGE_CACHE[path] = img            # en dernier = le plus récent
+    while len(IMAGE_CACHE) > IMAGE_CACHE_MAX:
+        IMAGE_CACHE.popitem(last=False)
+    return img
 
 
 # ====================================================================== cerveau de l'app
@@ -1880,6 +1898,7 @@ class App:
         self.update = None        # (version, code) si une mise à jour est disponible
         self.heartbeat = 0.0      # dernier passage de l'interface (détecteur de gel)
         self.first_beat = 0.0     # premier passage de l'interface
+        self.last_prices_save = time.time()
         self.safe_mode = False    # démarrage sans chargement (après plantages répétés)
         self.loading_started = False
         self.events_lock = threading.Lock()
@@ -1926,6 +1945,14 @@ class App:
         self.start_loading()
         self.notify()
 
+    def save_prices_soon(self):
+        """Le fichier des prix (~300 Ko) est réécrit au plus toutes les 30 s pendant le
+        chargement (au lieu d'après chaque jeu) : moins de batterie et d'usure.
+        Il est aussi enregistré à la fermeture de l'app."""
+        if time.time() - self.last_prices_save >= 30:
+            self.last_prices_save = time.time()
+            self.prices.save()
+
     def set_poison(self, key):
         """Le jeu en cours de chargement a fait planter l'app : on le met de côté."""
         if "|" not in key:
@@ -1950,7 +1977,10 @@ class App:
             time.sleep(2)
             if self.closed:
                 break
-            write_marker(started)            # « l'app est toujours en vie »
+            beats = getattr(self, "_beats", 0) + 1
+            self._beats = beats
+            if beats % 5 == 1:               # toutes les 10 s : « l'app est toujours en vie »
+                write_marker(started)
             if not stable and time.time() - started > 60:
                 stable = True                # 1 min sans plantage : compteur remis à 0
                 try:
@@ -2202,7 +2232,7 @@ class App:
             os.remove(JOB_FILE)
         except OSError:
             pass
-        self.prices.save()
+        self.save_prices_soon()
         url = self.cover_url(label, game)
         if url:
             self.covers.want(url)
@@ -2378,16 +2408,53 @@ class HomeScreen(Screen):
         self.add_subview(self.scroll)
         self.status = make_label("", (0, 0, 10, 10), 11, False, app.theme["status"])
         self.add_subview(self.status)
-        self._dirty = True
+        self.built_sig = None      # état des bandeaux + largeur au dernier dessin complet
+        self.summary_refs = None   # étiquettes mises à jour sur place
+        self.card_refs = {}
 
     def on_show(self):
         self.app.focus = None
-        self.build()
+        self.refresh_values()
 
     def on_data(self, label, game):
-        self._dirty = True
         if not self.hidden:
-            self.later(self.build, 0.8)
+            self.later(self.refresh_values, 0.8)
+
+    def layout_sig(self):
+        return (self.width, self.app.safe_mode, bool(self.app.update),
+                bool(NET.blocked_minutes()), self.app.interrupted)
+
+    def refresh_values(self):
+        """Met à jour les chiffres sans recréer l'écran (moins de calcul). Redessine
+        tout seulement si un bandeau apparaît/disparaît ou si la largeur change."""
+        if self.built_sig != self.layout_sig() or not self.summary_refs:
+            self.build()
+            return
+        count_lbl, value_lbl = self.summary_refs
+        owned = sum(self.app.coll.count(l) for l in LABELS)
+        total = sum(len(GAMES_BY[l]) for l in LABELS)
+        value = sum(self.app.console_value(l)[0] for l in LABELS)
+        count_lbl.text = "%d / %d jeux" % (owned, total)
+        value_lbl.text = "Valeur estimée : %s" % eur(value)
+        t = self.app.theme
+        for label, (cnt, fill, sub, track_w) in self.card_refs.items():
+            got, pct, text = self.card_texts(label)
+            cnt.text = "%d / %d" % (got, len(GAMES_BY[label]))
+            cnt.text_color = t["owned"] if got else t["sub"]
+            fill.frame = (0, 0, max(8, track_w * pct), 8)
+            fill.hidden = not got
+            sub.text = text
+
+    def card_texts(self, label):
+        got, total = self.app.coll.count(label), len(GAMES_BY[label])
+        value, known = self.app.console_value(label)
+        pct = got / float(total) if total else 0
+        text = "%d %% complété" % round(pct * 100)
+        if got:
+            text += "   •   valeur %s" % eur(value)
+            if known < got:
+                text += " (%d/%d prix)" % (known, got)
+        return got, pct, text
 
     def on_status(self, text):
         self.status.text = text
@@ -2440,10 +2507,14 @@ class HomeScreen(Screen):
         card = ui.View(frame=(pad, y, w - 2 * pad, 172), background_color=t["card"])
         card.corner_radius = 14
         card.add_subview(make_label("Toutes consoles", (16, 12, w, 18), 13, False, t["sub"]))
-        card.add_subview(make_label("%d / %d jeux" % (owned, total), (16, 32, w, 30),
-                                    26, True, t["text"]))
-        card.add_subview(make_label("Valeur estimée : %s" % eur(value), (16, 64, w, 20),
-                                    15, False, t["text"]))
+        count_lbl = make_label("%d / %d jeux" % (owned, total), (16, 32, w, 30), 26, True,
+                               t["text"])
+        value_lbl = make_label("Valeur estimée : %s" % eur(value), (16, 64, w, 20), 15, False,
+                               t["text"])
+        card.add_subview(count_lbl)
+        card.add_subview(value_lbl)
+        self.summary_refs = (count_lbl, value_lbl)
+        self.card_refs = {}
         cw = w - 2 * pad
         card.add_subview(make_button("Rapport de valeur", (16, 92, (cw - 44) / 2, 30),
                                      lambda s: self.app_value(None), t["accent"], size=13))
@@ -2465,19 +2536,18 @@ class HomeScreen(Screen):
             sv.add_subview(self.console_card(label, full, (x, y, cw, 96)))
         y += 96 + pad
         sv.content_size = (w, y)
-        self._dirty = False
+        self.built_sig = self.layout_sig()
 
     def console_card(self, label, full, frame):
         t = self.app.theme
         x, y, w, h = frame
         card = ui.View(frame=frame, background_color=t["card"])
         card.corner_radius = 14
-        got, total = self.app.coll.count(label), len(GAMES_BY[label])
-        value, known = self.app.console_value(label)
-        pct = got / float(total) if total else 0
+        got, pct, text = self.card_texts(label)
         card.add_subview(make_label(full, (16, 12, w - 120, 22), 17, True, t["text"]))
-        card.add_subview(make_label("%d / %d" % (got, total), (w - 110, 12, 94, 22), 15, True,
-                                    t["owned"] if got else t["sub"], "right"))
+        cnt = make_label("%d / %d" % (got, len(GAMES_BY[label])), (w - 110, 12, 94, 22), 15,
+                         True, t["owned"] if got else t["sub"], "right")
+        card.add_subview(cnt)
         track = ui.View(frame=(16, 44, w - 32, 8), background_color=t["field"])
         track.corner_radius = 4
         fill = ui.View(frame=(0, 0, max(8, (w - 32) * pct), 8), background_color=t["owned"])
@@ -2485,12 +2555,9 @@ class HomeScreen(Screen):
         fill.hidden = not got
         track.add_subview(fill)
         card.add_subview(track)
-        sub = "%d %% complété" % round(pct * 100)
-        if got:
-            sub += "   •   valeur %s" % eur(value)
-            if known < got:
-                sub += " (%d/%d prix)" % (known, got)
-        card.add_subview(make_label(sub, (16, 60, w - 50, 22), 12, False, t["sub"]))
+        sub = make_label(text, (16, 60, w - 50, 22), 12, False, t["sub"])
+        card.add_subview(sub)
+        self.card_refs[label] = (cnt, fill, sub, w - 32)
         card.add_subview(make_label("›", (w - 30, 56, 20, 26), 22, False, t["sub"], "right"))
         b = ui.Button(frame=(0, 0, w, h))
         b.action = lambda s, l=label: self.nav.push(ConsoleScreen(self.app, self.nav, l))
@@ -3473,9 +3540,10 @@ def main():
                 poison = f.read().strip()
         except OSError:
             pass
-    # Plantage « tôt » = la session précédente a duré moins de 25 s.
+    # Plantage « tôt » = la session précédente a duré moins de 15 s
+    # (signe de vie noté à 2 s, puis toutes les 10 s).
     early = isinstance(previous, dict) and \
-        previous.get("alive", 0) - previous.get("start", 0) < 25
+        previous.get("alive", 0) - previous.get("start", 0) < 15
     starts = read_json(STARTS_FILE)
     count = (starts.get("early", 0) if isinstance(starts, dict) else 0) + 1 if early else 0
     try:
@@ -3487,7 +3555,7 @@ def main():
     if interrupted:
         log("La session précédente ne s'est pas fermée normalement "
             "(plantage, ou Pythonista fermé de force)%s"
-            % (" après moins de 25 s (%d fois de suite)" % count if early else ""), "ALERTE")
+            % (" après moins de 15 s (%d fois de suite)" % count if early else ""), "ALERTE")
     try:
         app = App()
         app.interrupted = interrupted
