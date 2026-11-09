@@ -89,7 +89,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.15 (09/11/2026)"
+APP_VERSION = "3.16 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -2682,13 +2682,37 @@ def make_label(text, frame, size=13, bold=False, color=None, align="left", lines
 
 
 def make_button(title, frame, action, color, text_color="white", size=14):
-    b = ui.Button(title=title, frame=frame)
+    """Bouton. Dans Pythonista, un bouton prend la taille de son titre : la taille
+    voulue est donc appliquée EN DERNIER (sinon bouton rétréci et titre coupé)."""
+    b = ui.Button()
+    b.title = title
+    b.font = ("<System-Bold>", size)
     b.background_color = color
     b.tint_color = text_color
     b.corner_radius = 10
-    b.font = ("<System-Bold>", size)
     b.action = action
+    b.frame = frame
     return b
+
+
+def make_pill(text, frame, size, bg, color="white", radius=None):
+    """Étiquette sur fond arrondi. Le fond est porté par une vue (l'arrondi du fond
+    d'un simple texte n'est pas appliqué dans Pythonista). Renvoie (cadre, texte)."""
+    box = ui.View(frame=frame)
+    box.background_color = bg
+    box.corner_radius = frame[3] / 2.0 if radius is None else radius
+    lbl = make_label(text, (0, 0, frame[2], frame[3]), size, True, color, "center")
+    box.add_subview(lbl)
+    return box, lbl
+
+
+def native_style(view, style):
+    """Force le style iOS (clair/sombre) des éléments natifs : onglets, champs de
+    texte, barres de défilement... (Pythonista les dessine sinon en style clair)."""
+    try:
+        view.objc_instance.setOverrideUserInterfaceStyle_(2 if style == "dark" else 1)
+    except Exception:
+        pass
 
 
 @guard_class
@@ -2751,6 +2775,7 @@ class AppView(ui.View):
         self.right = None
         self.line = ui.View(background_color=t["line"])
         self.bar.add_subview(self.line)
+        native_style(self, t["style"])
         NET.web_host = self   # le navigateur intégré sera créé seulement s'il sert
 
     def push(self, screen):
@@ -2829,6 +2854,7 @@ class AppView(ui.View):
         self.app.theme.clear()
         self.app.theme.update(new)        # les vues créées ensuite prennent le nouveau thème
         recolor(self, theme_mappings(old, new), new["indicator"])
+        native_style(self, style)
         for s in list(self.stack):
             if hasattr(s, "on_theme"):
                 s.on_theme()
@@ -3096,6 +3122,7 @@ class ConsoleScreen(Screen):
         self.search.background_color = t["field"]
         self.search.text_color = t["text"]
         self.search.border_width = 0
+        self.search.bordered = False     # sinon fond blanc par-dessus nos couleurs
         self.search.corner_radius = 9
         self.search.delegate = self
         self.add_subview(self.search)
@@ -3415,18 +3442,20 @@ class Tile(ui.View):
         self.t_ph.add_subview(self.t_ph_label)
         self.t_img = ui.ImageView()
         self.t_img.content_mode = ui.CONTENT_SCALE_ASPECT_FIT
-        self.t_num = make_label("", (8, 8, 44, 16), 10, True, "white", "center")
-        self.t_num.background_color = (0, 0, 0, 0.55)
-        self.t_num.corner_radius = 5
-        self.t_ok = make_label("✓", (0, 8, 22, 22), 14, True, "white", "center")
-        self.t_ok.background_color = t["owned"]
-        self.t_ok.corner_radius = 11
+        # Numéro : fond foncé + léger contour clair, lisible même sur la bande noire
+        # en haut des jaquettes PS2.
+        self.t_num_box, self.t_num = make_pill("", (8, 8, 44, 18), 10, (0, 0, 0, 0.75),
+                                               radius=6)
+        self.t_num_box.border_width = 1
+        self.t_num_box.border_color = (1, 1, 1, 0.45)
+        self.t_ok_box, self.t_ok = make_pill("✓", (0, 8, 24, 24), 14, t["owned"])
         self.t_title = make_label("", (0, 0, 10, 10), 11, False, t["text"], "center", 2)
         self.t_price = make_label("", (0, 0, 10, 10), 11, True, t["text"])
         self.t_stars = make_label("", (0, 0, 10, 10), 10, False, t["sub"], "right")
         self.t_btn = ui.Button()
         self.t_btn.action = lambda s: self.t_game and self.t_on_tap(self.t_game)
-        for v in (self.t_ph, self.t_img, self.t_num, self.t_ok, self.t_title, self.t_price, self.t_stars,
+        for v in (self.t_ph, self.t_img, self.t_num_box, self.t_ok_box, self.t_title, self.t_price,
+                  self.t_stars,
                   self.t_btn):
             self.add_subview(v)
 
@@ -3434,7 +3463,7 @@ class Tile(ui.View):
         cover_h = h - 52
         self.t_ph.frame = self.t_img.frame = (5, 5, w - 10, cover_h - 5)
         self.t_ph_label.frame = (0, (cover_h - 5) / 2 - 20, w - 10, 40)
-        self.t_ok.frame = (w - 30, 8, 22, 22)
+        self.t_ok_box.frame = (w - 32, 8, 24, 24)
         self.t_title.frame = (5, cover_h + 2, w - 10, 30)
         self.t_price.frame = (6, h - 19, w / 2, 15)
         self.t_stars.frame = (w / 2 - 6, h - 19, w / 2, 15)
@@ -3453,7 +3482,7 @@ class Tile(ui.View):
         self.border_width = 2 if owned else 0.5
         self.border_color = (rar[3] if rar else t["owned"]) if owned else t["line"]
         self.t_num.text = "#%03d" % app.number[label][game]
-        self.t_ok.hidden = not owned
+        self.t_ok_box.hidden = not owned
         self.t_title.text = game
         self.t_title.font = ("<System-Bold>" if owned else "<System>", 11)
         self.t_title.text_color = t["text"] if owned else t["sub"]
@@ -3587,10 +3616,8 @@ class DetailScreen(Screen):
                                   (pad, y, w - 2 * pad, 18), 12, False, t["sub"], "center"))
         y += 24
         if rar:
-            chip = make_label("%s  %s" % (stars(rar[2]), rar[1]), (w / 2 - 90, y, 180, 26), 13,
-                              True, "white", "center")
-            chip.background_color = rar[3]
-            chip.corner_radius = 13
+            chip, _ = make_pill("%s  %s" % (stars(rar[2]), rar[1]), (w / 2 - 90, y, 180, 28), 13,
+                                rar[3])
             sv.add_subview(chip)
             y += 34
 
