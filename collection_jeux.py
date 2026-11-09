@@ -88,7 +88,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.11 (09/11/2026)"
+APP_VERSION = "3.12 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -1943,13 +1943,43 @@ class CoverStore:
     def __init__(self, app):
         self.app = app
         self.lock = threading.Lock()
-        self.queue = []
+        self.queue = []          # jaquettes à télécharger, la première d'abord
+        self.urgent = []         # fiche ouverte : avant tout le reste
         self.failed = set()
         self.event = threading.Event()
         try:
             os.makedirs(COVER_DIR, exist_ok=True)
         except OSError:
             pass
+        colors = read_json(os.path.join(COVER_DIR, "couleurs.json"))
+        self.colors = colors if isinstance(colors, dict) else {}   # url -> couleur moyenne
+        self.colors_dirty = 0
+
+    def save_colors(self):
+        if self.colors_dirty:
+            self.colors_dirty = 0
+            try:
+                write_json(os.path.join(COVER_DIR, "couleurs.json"), dict(self.colors))
+            except OSError:
+                pass
+
+    def color(self, url, grey=False):
+        """Couleur moyenne de la jaquette (affichée en attendant l'image)."""
+        c = self.colors.get(url) if url else None
+        if not c or not grey:
+            return c
+        r, g, b = int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)
+        y = int(0.3 * r + 0.59 * g + 0.11 * b)
+        return "#%02x%02x%02x" % (y, y, y)
+
+    def set_window(self, urls):
+        """Jaquettes à l'écran puis juste à côté, dans l'ordre : SEULES celles-ci sont
+        téléchargées (celles qui sont sorties de l'écran sont retirées de la file)."""
+        with self.lock:
+            self.queue = [u for u in urls
+                          if u and u not in self.failed and not os.path.exists(self.path(u))]
+        if self.queue:
+            self.event.set()
 
     @staticmethod
     def path(url, grey=False):
@@ -1969,22 +1999,29 @@ class CoverStore:
         return None
 
     def want(self, url):
-        """Demande une jaquette ; la dernière demandée passe en premier
-        (fiche ouverte, cases visibles à l'écran)."""
+        """Jaquette demandée en priorité (fiche ouverte)."""
         with self.lock:
             if url in self.failed or os.path.exists(self.path(url)):
                 return
-            if url in self.queue:
-                self.queue.remove(url)
-            self.queue.append(url)
+            if url in self.urgent:
+                self.urgent.remove(url)
+            self.urgent.append(url)
         self.event.set()
 
     def worker(self):
         import requests
         while not self.app.closed:
             with self.lock:
-                url = self.queue.pop() if self.queue else None  # le plus récent d'abord
+                if self.urgent:
+                    url = self.urgent.pop()
+                elif self.queue:
+                    url = self.queue.pop(0)          # à l'écran d'abord, puis à côté
+                else:
+                    url = None
+            if url and os.path.exists(self.path(url)):
+                continue
             if not url:
+                self.save_colors()
                 self.event.wait(20)
                 self.event.clear()
                 continue
@@ -1995,8 +2032,13 @@ class CoverStore:
                 tmp = self.path(url) + ".tmp"
                 with open(tmp, "wb") as f:
                     f.write(r.content)
-                self._make_grey(tmp, self.path(url, True))
+                color = self._make_grey(tmp, self.path(url, True))
                 os.replace(tmp, self.path(url))
+                if color:
+                    self.colors[url] = color
+                    self.colors_dirty += 1
+                    if self.colors_dirty >= 20:
+                        self.save_colors()
             except Exception as ex:
                 with self.lock:
                     self.failed.add(url)
@@ -2011,17 +2053,21 @@ class CoverStore:
 
     @staticmethod
     def _make_grey(src, dst):
+        """Version grise (jeux manquants) + couleur moyenne. Renvoie la couleur."""
         try:
             from PIL import Image, ImageEnhance
-            im = Image.open(src).convert("L")
-            im = ImageEnhance.Brightness(im).enhance(0.9).convert("RGB")
-            im.save(dst, "JPEG", quality=80)
+            im = Image.open(src).convert("RGB")
+            r, g, b = im.resize((1, 1)).getpixel((0, 0))
+            grey = ImageEnhance.Brightness(im.convert("L")).enhance(0.9).convert("RGB")
+            grey.save(dst + ".tmp", "JPEG", quality=80)
+            os.replace(dst + ".tmp", dst)   # jamais d'image à moitié écrite à l'écran
+            return "#%02x%02x%02x" % (r, g, b)
         except Exception:
-            pass
+            return None
 
 
 IMAGE_CACHE = collections.OrderedDict()   # chemin -> ui.Image (les plus récentes)
-IMAGE_CACHE_MAX = 60
+IMAGE_CACHE_MAX = 48   # ≈ l'écran + la zone juste avant/après (le reste est déchargé)
 
 
 def load_image(path):
@@ -2224,6 +2270,7 @@ class App:
         self.closed = True
         self.wake.set()
         self.covers.event.set()
+        self.covers.save_colors()
         self.prices.save()
 
     # ---------------------------------------------------------- abonnements
@@ -2398,8 +2445,6 @@ class App:
                 for kk in [kk for kk, gg in wanted.items() if gg == g]:
                     del wanted[kk]
                 found += 1
-                if row["img"]:
-                    self.covers.want(row["img"])
             self.notify()
             if not form:
                 break
@@ -2479,10 +2524,7 @@ class App:
         except OSError:
             pass
         self.save_prices_soon()
-        url = self.cover_url(label, game)
-        if url:
-            self.covers.want(url)
-        self.notify(label, game)
+        self.notify(label, game)   # la jaquette sera téléchargée quand elle s'affichera
 
 
 # ====================================================================== petits éléments
@@ -2633,6 +2675,8 @@ class AppView(ui.View):
         self.app.flush_events()
         for s in list(self.stack):
             s.run_due()
+        if self.stack and hasattr(self.stack[-1], "idle"):
+            self.stack[-1].idle()
 
     def will_close(self):
         self.update_interval = 0
@@ -2882,6 +2926,8 @@ class ConsoleScreen(Screen):
         self.items = []             # [("h", texte) | ("g", jeu)]
         self.frames = []
         self.live = {}              # index -> vue affichée
+        self.pool = []              # cases recyclables (sorties de l'écran)
+        self.tops, self.prefetch = [], []
         self.layout_width = 0
         self.bar_button = ("Trier : N°", lambda s: self.cycle_sort())
 
@@ -2943,8 +2989,8 @@ class ConsoleScreen(Screen):
             return
         for i, v in list(self.live.items()):
             kind, game = self.items[i]
-            if kind == "g" and self.app.cover_url(self.label, game) == url:
-                self.redraw_index(i)
+            if kind == "g" and isinstance(v, Tile) and self.app.cover_url(self.label, game) == url:
+                v.show_cover()
 
     # ---------------------------------------------------------- contrôles
     def textfield_did_change(self, tf):
@@ -3051,9 +3097,9 @@ class ConsoleScreen(Screen):
             frames = []
             y = 200
         self.frames = frames
-        for v in self.live.values():
-            self.scroll.remove_subview(v)
-        self.live = {}
+        self.tops = [f[1] for f in frames]
+        for i in list(self.live):
+            self.release(i)
         self.empty_label_visible(not self.items)
         self.scroll.content_size = (w, y + pad)
         off = self.scroll.content_offset[1]
@@ -3072,23 +3118,74 @@ class ConsoleScreen(Screen):
     def scrollview_did_scroll(self, sv):
         self.render_visible()
 
+    def indices_between(self, y0, y1):
+        """Cases dont le haut est entre y0 et y1 (recherche rapide : les cases sont
+        rangées de haut en bas)."""
+        import bisect
+        tile_h = getattr(self, "tile_size", (0, 300))[1]
+        start = bisect.bisect_left(self.tops, y0 - tile_h)
+        end = bisect.bisect_right(self.tops, y1)
+        return range(start, end)
+
     def render_visible(self):
-        top = self.scroll.content_offset[1] - 400
-        bottom = self.scroll.content_offset[1] + self.scroll.height + 600
-        need = set(i for i, f in enumerate(self.frames) if f[1] + f[3] >= top and f[1] <= bottom)
+        """Affiche les cases à l'écran (+ une petite marge), recycle les autres, et
+        demande le téléchargement des seules jaquettes à l'écran puis juste après."""
+        off, h = self.scroll.content_offset[1], self.scroll.height
+        need = set(self.indices_between(off - 150, off + h + 250))
         for i in list(self.live):
             if i not in need:
-                self.scroll.remove_subview(self.live.pop(i))
+                self.release(i)
         for i in sorted(need):
             if i not in self.live:
                 self.live[i] = self.make_view(i)
-                self.scroll.add_subview(self.live[i])
+        # Fenêtre de préchargement : l'écran, puis 1 écran plus bas et ½ écran plus haut.
+        visible = list(self.indices_between(off, off + h))
+        around = list(self.indices_between(off + h, off + 2 * h)) + \
+            list(self.indices_between(off - h / 2, off))
+        self.prefetch = [i for i in around if self.items[i][0] == "g"]
+        window = [self.app.cover_url(self.label, self.items[i][1])
+                  for i in visible + self.prefetch if self.items[i][0] == "g"]
+        if window != getattr(self, "last_window", None):
+            self.last_window = window
+            self.app.covers.set_window(window)
+
+    def release(self, i):
+        v = self.live.pop(i, None)
+        if v is None:
+            return
+        if isinstance(v, Tile):
+            v.release()
+            self.pool.append(v)
+        else:
+            self.scroll.remove_subview(v)
+
+    def idle(self):
+        """Temps mort (4 fois par seconde) : décode à l'avance 3 jaquettes de la zone
+        juste à côté de l'écran, pour qu'elles s'affichent instantanément."""
+        done = 0
+        for i in getattr(self, "prefetch", []):
+            if done >= 3:
+                break
+            kind, game = self.items[i] if i < len(self.items) else ("h", None)
+            if kind != "g":
+                continue
+            url = self.app.cover_url(self.label, game)
+            if not url:
+                continue
+            owned = self.app.coll.is_owned(self.label, game)
+            p = self.app.covers.path(url, grey=not owned)
+            if p in IMAGE_CACHE or not os.path.exists(p):
+                continue
+            load_image(p)
+            done += 1
 
     def redraw_index(self, i):
-        if i in self.live:
-            self.scroll.remove_subview(self.live.pop(i))
+        v = self.live.get(i)
+        if isinstance(v, Tile) and self.items[i][0] == "g":
+            v.show(self.label, self.items[i][1], self.frames[i])
+        elif v is not None:
+            self.release(i)
             self.live[i] = self.make_view(i)
-            self.scroll.add_subview(self.live[i])
 
     def redraw_game(self, game):
         for i, (kind, g) in enumerate(self.items):
@@ -3099,8 +3196,16 @@ class ConsoleScreen(Screen):
         kind, value = self.items[i]
         frame = self.frames[i]
         if kind == "h":
-            return make_label(value.upper(), frame, 12, True, self.app.theme["sub"])
-        return make_tile(self.app, self.label, value, frame, self.tapped)
+            v = make_label(value.upper(), frame, 12, True, self.app.theme["sub"])
+            self.scroll.add_subview(v)
+            return v
+        tile = self.pool.pop() if self.pool else None
+        if tile is None:
+            tile = Tile(self.app, self.tapped)
+            self.scroll.add_subview(tile)
+        tile.hidden = False
+        tile.show(self.label, value, frame)
+        return tile
 
     def tapped(self, game):
         if self.quick:
@@ -3129,68 +3234,114 @@ class ConsoleScreen(Screen):
             self.compute_frames()
 
 
-def make_tile(app, label, game, frame, on_tap):
-    """Une case du « Pokédex » : jaquette (grise si pas obtenu), n°, nom, prix, rareté."""
-    t = app.theme
-    x, y, w, h = frame
-    owned = app.coll.is_owned(label, game)
-    rar = app.rarity(label, game)
-    price = app.price(label, game)
-    tile = ui.View(frame=frame, background_color=t["card"])
-    tile.corner_radius = 10
-    tile.border_width = 2 if owned else 0.5
-    tile.border_color = (rar[3] if rar else t["owned"]) if owned else t["line"]
+@guard_class
+class Tile(ui.View):
+    """Une case du « Pokédex » : jaquette (grise si pas obtenu), n°, nom, prix, rareté.
+    Les cases sont RECYCLÉES : en faisant défiler, on change juste leur contenu."""
 
-    cover_h = h - 52
-    url = app.cover_url(label, game)
-    path = app.covers.local(url, grey=not owned) if url else None
-    dim = False
-    if not path and url and not owned:  # pas de version grise : couleur atténuée
-        path, dim = app.covers.local(url), True
-    img = load_image(path)
-    if img:
-        iv = ui.ImageView(frame=(5, 5, w - 10, cover_h - 5))
-        iv.content_mode = ui.CONTENT_SCALE_ASPECT_FIT
-        iv.image = img
-        if not owned:
-            iv.alpha = 0.35 if dim else 0.55
-        tile.add_subview(iv)
-    else:
-        ph = ui.View(frame=(5, 5, w - 10, cover_h - 5), background_color=t["placeholder"])
-        ph.corner_radius = 6
-        loading = app.loading == (label, game)
-        ph.add_subview(make_label("…" if loading or not app.error_of(label, game) else "?",
-                                  (0, (cover_h - 5) / 2 - 20, w - 10, 40), 30, True,
-                                  t["sub"], "center"))
-        tile.add_subview(ph)
+    def __init__(self, app, on_tap):
+        super().__init__()
+        t = app.theme
+        self.app, self.on_tap, self.game, self.size = app, on_tap, None, None
+        self.background_color = t["card"]
+        self.corner_radius = 10
+        self.ph = ui.View()                      # couleur d'attente
+        self.ph.corner_radius = 6
+        self.ph_label = make_label("", (0, 0, 10, 10), 30, True, t["sub"], "center")
+        self.ph.add_subview(self.ph_label)
+        self.iv = ui.ImageView()
+        self.iv.content_mode = ui.CONTENT_SCALE_ASPECT_FIT
+        self.num = make_label("", (8, 8, 44, 16), 10, True, "white", "center")
+        self.num.background_color = (0, 0, 0, 0.55)
+        self.num.corner_radius = 5
+        self.ok = make_label("✓", (0, 8, 22, 22), 14, True, "white", "center")
+        self.ok.background_color = t["owned"]
+        self.ok.corner_radius = 11
+        self.name = make_label("", (0, 0, 10, 10), 11, False, t["text"], "center", 2)
+        self.price = make_label("", (0, 0, 10, 10), 11, True, t["text"])
+        self.stars = make_label("", (0, 0, 10, 10), 10, False, t["sub"], "right")
+        self.btn = ui.Button()
+        self.btn.action = lambda s: self.game and self.on_tap(self.game)
+        for v in (self.ph, self.iv, self.num, self.ok, self.name, self.price, self.stars,
+                  self.btn):
+            self.add_subview(v)
 
-    num = make_label("#%03d" % app.number[label][game], (8, 8, 44, 16), 10, True, "white",
-                     "center")
-    num.background_color = (0, 0, 0, 0.55)
-    num.corner_radius = 5
-    tile.add_subview(num)
-    if owned:
-        ok = make_label("✓", (w - 30, 8, 22, 22), 14, True, "white", "center")
-        ok.background_color = t["owned"]
-        ok.corner_radius = 11
-        tile.add_subview(ok)
+    def place(self, w, h):
+        cover_h = h - 52
+        self.ph.frame = self.iv.frame = (5, 5, w - 10, cover_h - 5)
+        self.ph_label.frame = (0, (cover_h - 5) / 2 - 20, w - 10, 40)
+        self.ok.frame = (w - 30, 8, 22, 22)
+        self.name.frame = (5, cover_h + 2, w - 10, 30)
+        self.price.frame = (6, h - 19, w / 2, 15)
+        self.stars.frame = (w / 2 - 6, h - 19, w / 2, 15)
+        self.btn.frame = (0, 0, w, h)
+        self.size = (w, h)
 
-    tile.add_subview(make_label(game, (5, cover_h + 2, w - 10, 30), 11, owned,
-                                t["text"] if owned else t["sub"], "center", 2))
-    if price:
-        ptxt = ("✎ " if price.get("manual") else "") + eur_short(price["mid"])
-    elif app.error_of(label, game):
-        ptxt = "prix ?"
-    else:
-        ptxt = "…"
-    tile.add_subview(make_label(ptxt, (6, h - 19, w / 2, 15), 11, True, t["text"]))
-    if rar:
-        tile.add_subview(make_label("★" * rar[2], (w / 2 - 6, h - 19, w / 2, 15), 10, False,
-                                    rar[3], "right"))
-    b = ui.Button(frame=(0, 0, w, h))
-    b.action = lambda s: on_tap(game)
-    tile.add_subview(b)
-    return tile
+    def show(self, label, game, frame):
+        app, t = self.app, self.app.theme
+        self.frame = frame
+        if self.size != (frame[2], frame[3]):
+            self.place(frame[2], frame[3])
+        self.label, self.game = label, game
+        owned = app.coll.is_owned(label, game)
+        rar = app.rarity(label, game)
+        price = app.price(label, game)
+        self.border_width = 2 if owned else 0.5
+        self.border_color = (rar[3] if rar else t["owned"]) if owned else t["line"]
+        self.num.text = "#%03d" % app.number[label][game]
+        self.ok.hidden = not owned
+        self.name.text = game
+        self.name.font = ("<System-Bold>" if owned else "<System>", 11)
+        self.name.text_color = t["text"] if owned else t["sub"]
+        if price:
+            self.price.text = ("✎ " if price.get("manual") else "") + eur_short(price["mid"])
+        else:
+            self.price.text = "prix ?" if app.error_of(label, game) else "…"
+        self.stars.text = "★" * rar[2] if rar else ""
+        self.stars.text_color = rar[3] if rar else t["sub"]
+        self.show_cover()
+
+    def cover_path(self):
+        """(chemin de l'image, atténuer ?) ou (None, False) si pas encore téléchargée."""
+        app = self.app
+        owned = app.coll.is_owned(self.label, self.game)
+        url = app.cover_url(self.label, self.game)
+        if not url:
+            return None, False
+        p = app.covers.path(url, grey=not owned)
+        if os.path.exists(p):
+            return p, False
+        if not owned and os.path.exists(app.covers.path(url)):
+            return app.covers.path(url), True      # pas de version grise : couleur atténuée
+        return None, False
+
+    def show_cover(self):
+        app, t = self.app, self.app.theme
+        owned = app.coll.is_owned(self.label, self.game)
+        path, dim = self.cover_path()
+        img = load_image(path) if path else None
+        if img:
+            self.iv.image = img
+            self.iv.alpha = 1.0 if owned else (0.35 if dim else 0.55)
+            self.iv.hidden = False
+            self.ph.hidden = True
+            return
+        self.iv.image = None                     # rien en mémoire pour cette case
+        self.iv.hidden = True
+        self.ph.hidden = False
+        url = app.cover_url(self.label, self.game)
+        color = app.covers.color(url, grey=not owned)
+        self.ph.background_color = color or t["placeholder"]
+        self.ph.alpha = 1.0 if owned or not color else 0.55
+        loading = app.loading == (self.label, self.game) or (url and not color)
+        self.ph_label.text = "" if color else ("…" if loading or not app.error_of(
+            self.label, self.game) else "?")
+
+    def release(self):
+        """Case sortie de l'écran : on décharge son image et on la garde pour plus tard."""
+        self.iv.image = None
+        self.game = None
+        self.hidden = True
 
 
 # ====================================================================== fiche d'un jeu
