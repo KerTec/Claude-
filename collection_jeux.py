@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.23 (09/11/2026)"
+APP_VERSION = "3.24 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -2375,22 +2375,36 @@ VARIANT_SKIP = re.compile(r"\[[^\]]*(demo|promo|resale|press|kiosk|disc only|man
 
 
 # Mentions d'édition / réédition qui ne changent pas le jeu (supprimées pour comparer).
+# Précis : « Ultimate Spider-Man », « Tomb Raider Anniversary » ou « Pokémon Gold » restent
+# des jeux distincts ; seules les mentions d'ÉDITION (« ... Edition », [Platinum]...) partent.
 _EDITION_RE = re.compile(
-    r"\[[^\]]*\]|\([^)]*\)|\b(?:platinum|essentials|classics|greatest hits|playstation hits|"
-    r"player'?s? choice|nintendo selects|xbox classics|game of the year|goty|collector'?s|"
-    r"limited|special|deluxe|gold|complete|definitive|ultimate|premium|day one|launch|"
-    r"anniversary|standard|steelbook|director'?s cut|bundle copy|not for resale|"
-    r"edition|version)\b", re.I)
+    r"\[[^\]]*\]|\([^)]*\)"
+    r"|\b(?:platinum|essentials|greatest hits|playstation hits|player'?s? choice|"
+    r"nintendo selects|xbox classics|game of the year|goty|director'?s cut|not for resale|"
+    r"steelbook)\b"
+    r"|\b(?:collector'?s|limited|special|deluxe|gold|complete|definitive|ultimate|premium|"
+    r"day one|launch|anniversary|standard|legacy|bonus disc|signature|exclusive|"
+    r"steelbook|champions?|platinum|enhanced)\s+(?:edition|version|pack)\b"
+    r"|\b(?:edition|version)\b", re.I)
 _CANON = {}
+_SQUASH = {}
 
 
 def base_key(title):
-    """Clé anti-doublon : titre normalisé (accents, &/and, II/2, tirets, « The »...)
-    sans les mentions d'édition. « God of War [Platinum] », « God of War - Greatest
-    Hits » et « God of War » ont la même clé. Gardée en mémoire (ultra rapide)."""
+    """Clé anti-doublon : mots normalisés (accents, &/and, II/2, tirets, « The »...)
+    sans les mentions d'édition, dans n'importe quel ordre. Gardée en mémoire."""
     k = _CANON.get(title)
     if k is None:
         k = _CANON[title] = frozenset(title_tokens(_EDITION_RE.sub(" ", normalize(title))))
+    return k
+
+
+def squash_key(title):
+    """2e clé : lettres et chiffres collés (« Ghosthunter » = « Ghost Hunter »)."""
+    k = _SQUASH.get(title)
+    if k is None:
+        k = _SQUASH[title] = "".join(sorted(base_key(title))) and \
+            re.sub(r"[^a-z0-9]", "", " ".join(title_tokens(_EDITION_RE.sub(" ", normalize(title)))))
     return k
 
 
@@ -2425,18 +2439,24 @@ class FullCatalog:
         jeux déjà dans la sélection. Une seule passe, par dictionnaire."""
         d = self.get(label)
         sel = self.selection_keys(label) | set(base_key(t) for t in extra_titles)
-        keep, bases = [], {}
+        sel_sq = self.selection_squash(label) | set(squash_key(t) for t in extra_titles)
+        keep, bases, squashes = [], {}, {}
         for r in d["rows"]:
-            k = base_key(r[0])
-            if not k or k in sel:
+            k, q = base_key(r[0]), squash_key(r[0])
+            if not k or k in sel or q in sel_sq:
                 continue
             i = bases.get(k)
             if i is None:
-                bases[k] = len(keep)
+                i = squashes.get(q)
+            if i is None:
+                bases[k] = squashes[q] = len(keep)
                 keep.append(r)
-            elif _plainness(r[0]) < _plainness(keep[i][0]):
-                keep[i] = r                   # on garde l'édition normale
-        d["rows"], d["bases"] = keep, bases
+            else:
+                bases.setdefault(k, i)
+                squashes.setdefault(q, i)
+                if _plainness(r[0]) < _plainness(keep[i][0]):
+                    keep[i] = r               # on garde l'édition normale
+        d["rows"], d["bases"], d["squash"] = keep, bases, squashes
         d["by"] = {r[0]: i for i, r in enumerate(keep)}
 
     def names(self, label):
@@ -2460,43 +2480,54 @@ class FullCatalog:
         if label not in self.sel_keys:
             keys = set()
             for g in GAMES_BY[label]:
-                for n, k in name_variants(g):
-                    # titre court (sans sous-titre) seulement s'il a un numéro : « Metal Gear
-                    # Solid 2 » = « Metal Gear Solid 2: Sons of Liberty »
-                    if k == 1.0 or re.search(r"\d", n):
-                        keys.add(base_key(n))
+                for n in self.selection_names(g):
+                    keys.add(base_key(n))
             keys.discard(frozenset())
             self.sel_keys[label] = keys
         return self.sel_keys[label]
+
+    @staticmethod
+    def selection_names(g):
+        """Tous les noms sous lesquels un jeu de la sélection peut apparaître."""
+        out = []
+        variants = name_variants(g)
+        for n, k in variants:
+            # titre court (sans sous-titre) seulement s'il a un numéro : « Metal Gear
+            # Solid 2 » = « Metal Gear Solid 2: Sons of Liberty »
+            if k == 1.0 or re.search(r"\d", n):
+                out.append(n)
+        parts = [p.strip() for p in SEARCH_ALIASES.get(g, g).split(" / ")]
+        if len(parts) > 1:                    # « Pokémon Sword / Shield » -> « Pokémon Shield »
+            first = parts[0].split()
+            for p in parts[1:]:
+                w = p.split()
+                if len(w) < len(first):
+                    out.append(" ".join(first[:len(first) - len(w)] + w))
+        return out
+
+    def selection_squash(self, label):
+        k = "sq:" + label
+        if k not in self.sel_keys:
+            self.sel_keys[k] = set(squash_key(n) for g in GAMES_BY[label]
+                                   for n in self.selection_names(g)) - {""}
+        return self.sel_keys[k]
 
     def add_page(self, label, rows, form, first):
         d = self.get(label)
         if first:                             # 1re page (ou mise à jour mensuelle)
             d["rows"], d["by"], d["bases"], d["pages"] = [], {}, {}, 0
         d["pages"] = d.get("pages", 0) + 1
-        added = 0
-        sel = self.selection_keys(label)
+        n0 = len(d["rows"])
         for r in rows:
             title = r["title"]
             if VARIANT_SKIP.search(title) or (set(title_tokens(title)) & NON_GAME):
                 continue
-            base = base_key(title)
-            if not base or base in sel:
-                continue                      # déjà dans la sélection
-            if base in d["bases"]:                # recherche directe (plus de boucle sur tout)
-                i = d["bases"][base]
-                if _plainness(title) < _plainness(d["rows"][i][0]):
-                    old = d["rows"][i][0]     # on préfère l'édition normale à [Platinum]
-                    d["rows"][i] = [title, r["url"], r["guide"].get("Disque seul"),
-                                    r["guide"].get("Complet"), r["guide"].get("Neuf"), r["img"]]
-                    d["by"].pop(old, None)
-                    d["by"][title] = i
+            if not base_key(title):
                 continue
-            d["bases"][base] = len(d["rows"])
-            d["by"][title] = len(d["rows"])
             d["rows"].append([title, r["url"], r["guide"].get("Disque seul"),
                               r["guide"].get("Complet"), r["guide"].get("Neuf"), r["img"]])
-            added += 1
+        self.compact(label)                   # dédoublonnage (2 clés, une passe)
+        added = max(0, len(d["rows"]) - n0)
         d["form"] = form
         d["done"] = form is None
         d["ts"] = time.time()
