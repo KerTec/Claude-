@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.27 (09/11/2026)"
+APP_VERSION = "3.28 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -540,8 +540,8 @@ NES = [
     ]),
     ("Suites et séries NES", [
         "Super Mario Bros.", "Super Mario Bros. 2", "Zelda II: The Adventure of Link",
-        "Mega Man 3", "Castlevania III: Dracula's Curse", "Duck Tales", "Contra",
-        "Ninja Gaiden", "Tetris", "Final Fantasy", "Bubble Bobble", "Double Dragon II"
+        "Mega Man 3", "Castlevania III: Dracula's Curse", "Duck Tales", "Probotector / Contra",
+        "Shadow Warriors / Ninja Gaiden", "Tetris", "Final Fantasy", "Bubble Bobble", "Double Dragon II"
     ]),
 ]
 
@@ -553,7 +553,7 @@ SNES = [
     ("Suites et séries Super Nintendo", [
         "Donkey Kong Country 2: Diddy's Kong Quest", "Donkey Kong Country 3",
         "Super Mario World 2: Yoshi's Island", "Super Mario All-Stars", "Super Mario RPG",
-        "Final Fantasy VI", "Secret of Mana", "Kirby's Dream Land 3", "Star Fox",
+        "Final Fantasy VI", "Secret of Mana", "Kirby's Dream Land 3", "Starwing / Star Fox",
         "F-Zero", "Mega Man X", "Super Castlevania IV", "Super Probotector",
         "Earthbound", "Street Fighter II Turbo", "Killer Instinct"
     ]),
@@ -600,11 +600,11 @@ GBA = [
 
 MD = [
     ("Top 7 Mega Drive", [
-        "Sonic the Hedgehog 2", "Streets of Rage 2", "Gunstar Heroes", "Sonic 3 & Knuckles",
+        "Sonic the Hedgehog 2", "Streets of Rage 2", "Gunstar Heroes", "Sonic & Knuckles",
         "Phantasy Star IV", "Shining Force II", "Castlevania: The New Generation"
     ]),
     ("Suites et séries Mega Drive", [
-        "Sonic the Hedgehog", "Sonic the Hedgehog 3", "Sonic & Knuckles", "Streets of Rage",
+        "Sonic the Hedgehog", "Sonic the Hedgehog 3", "Sonic Spinball", "Streets of Rage",
         "Streets of Rage 3", "Shining Force", "Golden Axe", "Ecco the Dolphin",
         "Mickey Mania", "Aladdin", "The Lion King", "Earthworm Jim", "ToeJam & Earl",
         "Comix Zone", "Shinobi III: Return of the Ninja Master"
@@ -625,7 +625,7 @@ MS = [
 GG = [
     ("Top 7 Game Gear", [
         "Sonic the Hedgehog", "Sonic the Hedgehog 2", "Shinobi", "Columns",
-        "Sonic Triple Trouble", "The GG Shinobi II: The Silent Fury", "Mickey Mouse: Castle of Illusion"
+        "Sonic Triple Trouble", "The GG Shinobi II: The Silent Fury", "Sonic Chaos"
     ]),
 ]
 
@@ -647,11 +647,11 @@ PS1 = [
 SATURN = [
     ("Top 7 Saturn", [
         "Panzer Dragoon Saga", "NiGHTS into Dreams", "Guardian Heroes", "Sega Rally Championship",
-        "Virtua Fighter 2", "Saturn Bomberman", "Radiant Silvergun"
+        "Virtua Fighter 2", "Saturn Bomberman", "Virtua Cop"
     ]),
     ("Autres incontournables Saturn", [
         "Panzer Dragoon", "Panzer Dragoon II Zwei", "Daytona USA", "Sonic Jam",
-        "Burning Rangers", "Dragon Force", "X-Men vs. Street Fighter"
+        "Burning Rangers", "Dragon Force", "Fighters Megamix"
     ]),
 ]
 
@@ -662,7 +662,7 @@ DREAMCAST = [
     ]),
     ("Autres incontournables Dreamcast", [
         "Shenmue II", "Sonic Adventure 2", "Resident Evil Code: Veronica", "Rez",
-        "Marvel vs. Capcom 2", "Ikaruga", "Phantasy Star Online", "Metropolis Street Racer",
+        "Marvel vs. Capcom 2", "Virtua Tennis", "Phantasy Star Online", "Metropolis Street Racer",
         "Space Channel 5", "Samba de Amigo"
     ]),
 ]
@@ -760,6 +760,8 @@ SEARCH_ALIASES = {
     "Star Fox 64": "Lylat Wars",
     "Xenosaga Episode I": "Xenosaga",
     "Skyrim": "The Elder Scrolls V: Skyrim",
+    "Final Fantasy VI": "Final Fantasy III",
+    "Tony Hawk's Pro Skater 2": "Tony Hawk's Skateboarding 2",
     "Marvel's Spider-Man": "Marvel Spiderman",
     "Professor Layton and the Diabolical Box": "Professor Layton and Pandora's Box",
     "Professor Layton and the Unwound Future": "Professor Layton and the Lost Future",
@@ -1957,7 +1959,7 @@ MATCH_MIN = 0.6
 def title_tokens(s):
     s = normalize(s).replace("&", " and ")
     s = re.sub(r"\btom clancy'?s?\b", " ", s)          # « Tom Clancy's Splinter Cell »
-    s = re.sub(r"\bthe legend of zelda\b", "zelda", s)  # PriceCharting : « Zelda ... »
+    s = re.sub(r"\b(the )?legend of zelda\b", "zelda", s)  # PriceCharting : « Zelda ... »
     s = re.sub(r"'s\b", "", s).replace("'", "").replace(".", "")
     s = re.sub(r"(?<=[a-z0-9])-(?=[a-z])", "", s)      # Spider-Man → spiderman
     s = re.sub(r"[^a-z0-9]+", " ", s)
