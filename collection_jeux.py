@@ -40,6 +40,7 @@ puis colle-le dans la conversation.
 """
 
 import collections
+import contextlib
 import csv
 import glob
 import shutil
@@ -88,7 +89,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.13 (09/11/2026)"
+APP_VERSION = "3.14 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -595,14 +596,24 @@ def alert(title, message):
         pass
 
 
+_HUD_BUSY = [False]
+
+
 def hud(message, icon="success", duration=1.0):
     """Petite bulle de confirmation. Toujours affichée depuis un fil séparé :
-    appelée depuis l'interface, console.hud_alert peut la geler (et iOS tue l'app)."""
+    console.hud_alert « bloque jusqu'à ce que la bulle disparaisse » (doc Pythonista),
+    appelée depuis l'interface elle la gèlerait. Une seule bulle à la fois."""
+    if _HUD_BUSY[0] and icon != "error":
+        return
+    _HUD_BUSY[0] = True
+
     def show():
         try:
-            console.hud_alert(message, icon, duration)
+            console.hud_alert(message, icon, max(0.25, min(duration, 5.0)))
         except Exception:
             pass
+        finally:
+            _HUD_BUSY[0] = False
     t = threading.Thread(target=show, name="bulle")
     t.daemon = True
     t.start()
@@ -1032,6 +1043,33 @@ TRANSIENT_RE = re.compile(r"anti-robot|bloqu|pause|connexion|délai|vérificatio
                           r"navigateur|HTTP 5", re.I)
 
 
+# Nettoyage des pages DANS le navigateur, avant de les passer à Python : scripts, styles,
+# icônes, commentaires, en-tête, boutons « ajouter à ma collection », bulles d'aide et
+# attributs inutiles. ≈ 60 % de données en moins (liste d'une console : 672 → 150 Ko),
+# vérifié sans aucune différence de résultat sur 457 vraies pages.
+SHRINK_RULES = [r"<script[\s\S]*?</script>", r"<style[\s\S]*?</style>",
+                r"<svg[\s\S]*?</svg>", r"<!--[\s\S]*?-->",
+                r"<(head|noscript|footer|nav)[\s\S]*?</\1>",
+                r'<td class="add_to container">[\s\S]*?</td>',
+                r'<div class="tour">[\s\S]*?</div>',
+                r'\s(onclick|style|title|data-[a-z-]+)="[^"]*"']
+SHRINK_JS = "".join("t = t.replace(/%s/gi, '');" % r.replace("/", "\\/") for r in SHRINK_RULES) + \
+    "t = t.replace(/\\s+/g, ' ');"
+
+
+def shrink_page(t):
+    """Même nettoyage, côté Python (pour les tests et la connexion directe)."""
+    for r in SHRINK_RULES:
+        t = re.sub(r, "", t, flags=re.I)
+    return re.sub(r"\s+", " ", t)
+
+
+try:   # libère la mémoire des objets iOS créés depuis une tâche de fond (doc objc_util)
+    from objc_util import autoreleasepool
+except Exception:
+    autoreleasepool = contextlib.nullcontext
+
+
 class VerifySheet(ui.View):
     """Fenêtre affichée quand PriceCharting demande une vérification « humaine »."""
 
@@ -1175,15 +1213,17 @@ class WebFetcher:
                       "'application/x-www-form-urlencoded'}, body: %s}" % json.dumps(urlencode(data))
         else:
             options = "{credentials: 'include'}"
-        started = self._js(
-            "window.__cj_res = null; window.__cj_txt = null;"
-            "fetch(%s, %s).then(function (r) {"
-            "  return r.text().then(function (t) {"
-            "    window.__cj_txt = t;"
-            "    window.__cj_res = JSON.stringify({s: r.status, u: r.url, n: t.length});"
-            "  });"
-            "}).catch(function (e) { window.__cj_res = JSON.stringify({err: String(e)}); });"
-            "'ok'" % (json.dumps(url), options))
+        js_start = ("window.__cj_res = null; window.__cj_txt = null;"
+                    "fetch(%s, %s).then(function (r) {"
+                    "  return r.text().then(function (t) {"
+                    "    var ch = /<title>[^<]*(Just a moment|Attention Required)/i.test(t);"
+                    % (json.dumps(url), options))
+        js_end = ("    window.__cj_txt = t;"
+                  "    window.__cj_res = JSON.stringify({s: r.status, u: r.url, n: t.length, ch: ch});"
+                  "  });"
+                  "}).catch(function (e) { window.__cj_res = JSON.stringify({err: String(e)}); });"
+                  "'ok'")
+        started = self._js(js_start + SHRINK_JS + js_end)
         if started != "ok":
             return None
         deadline = time.time() + 25
@@ -1201,7 +1241,7 @@ class WebFetcher:
             raise PriceError("pas de connexion internet (%s)" % info["err"][:60])
         page = self._read_js_text("window.__cj_txt", int(info.get("n") or 0))
         status = int(info.get("s") or 0)
-        if is_challenge(status, page) or status in (403, 429, 503):
+        if info.get("ch") or status in (403, 429, 503):
             log("Mode rapide : nouvelle vérification anti-robot demandée", "AVERT")
             return None                     # → affichage de la page (vérification)
         if status == 404:
@@ -1391,7 +1431,8 @@ class Fetcher:
                     log("Requêtes directes bloquées : passage au navigateur intégré", "ALERTE")
             self._pace()
             try:
-                final, page = self.web.get(url, data)
+                with autoreleasepool():
+                    final, page = self.web.get(url, data)
             except Blocked as ex:
                 self.blocked_until = time.time() + BLOCK_PAUSE
                 log("Navigateur intégré bloqué (%s) : pause %d min" % (ex, BLOCK_PAUSE // 60),
@@ -2011,6 +2052,9 @@ class CoverStore:
     def worker(self):
         import requests
         while not self.app.closed:
+            if self.app.in_background():          # rien à afficher : on attend
+                time.sleep(2)
+                continue
             with self.lock:
                 if self.urgent:
                     url = self.urgent.pop()
@@ -2115,6 +2159,8 @@ class App:
         self.heartbeat = 0.0      # dernier passage de l'interface (détecteur de gel)
         self.first_beat = 0.0     # premier passage de l'interface
         self.last_prices_save = time.time()
+        self.bg_paused = False    # chargement en pause car l'app est en arrière-plan
+        self.awake = False        # écran maintenu allumé pendant un gros chargement
         self.safe_mode = False    # démarrage sans chargement (après plantages répétés)
         self.loading_started = False
         self.events_lock = threading.Lock()
@@ -2263,6 +2309,12 @@ class App:
 
     def stop(self):
         log("Fermeture normale de l'app")
+        if self.awake:
+            self.awake = False
+            try:
+                console.set_idle_timer_disabled(False)   # veille normale rétablie
+            except Exception:
+                pass
         try:
             os.remove(RUN_MARKER)
         except OSError:
@@ -2475,14 +2527,45 @@ class App:
         elif n == 4:
             log("Même erreur sur d'autres jeux (suivantes masquées) : %s" % ex, "AVERT")
 
+    def in_background(self):
+        """L'app est-elle en arrière-plan (autre app ouverte, écran verrouillé) ?"""
+        try:
+            return console.is_in_background()
+        except Exception:
+            return False
+
+    def pause_if_background(self):
+        """En arrière-plan, iOS met le navigateur intégré en pause : on n'insiste pas
+        (sinon délais dépassés, fausses erreurs, et risque qu'iOS ferme l'app)."""
+        if not self.in_background():
+            if self.bg_paused:
+                self.bg_paused = False
+                log("App revenue au premier plan : chargement repris")
+            return False
+        if not self.bg_paused:
+            self.bg_paused = True
+            log("App en arrière-plan : chargement en pause")
+        time.sleep(3)
+        return True
+
+    def keep_awake(self, flag):
+        """Pendant un gros chargement, l'écran ne se met pas en veille (sinon iOS
+        suspend l'app et le chargement s'arrête). Rétabli dès que c'est fini."""
+        if flag != self.awake:
+            self.awake = flag
+            on_main(console.set_idle_timer_disabled, flag)
+
     def _price_step(self):
         """Une étape : un jeu chargé (ou une attente)."""
+        if self.pause_if_background():
+            return
         if NET.blocked_minutes():
             self.set_status("PriceCharting en pause encore %d min" % NET.blocked_minutes())
             self.wake.wait(60)
             self.wake.clear()
             return
         job = self.next_job()
+        self.keep_awake(bool(job) and self.remaining() >= 20)
         if not job:
             self.loading = None
             self.set_status("Catalogue à jour : prix et jaquettes chargés")
