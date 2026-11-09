@@ -89,7 +89,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.17 (09/11/2026)"
+APP_VERSION = "3.18 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -422,6 +422,115 @@ SWITCH = [
     ])
 ]
 
+
+PS3 = [
+    ("Top 7 PS3", [
+        "The Last of Us", "Uncharted 2: Among Thieves", "Red Dead Redemption",
+        "Grand Theft Auto V", "Demon's Souls", "Metal Gear Solid 4: Guns of the Patriots",
+        "God of War III"
+    ]),
+    ("Suites : Uncharted et God of War", [
+        "Uncharted: Drake's Fortune", "Uncharted 3: Drake's Deception",
+        "God of War Collection", "God of War: Ascension"
+    ]),
+    ("Suites : Batman, BioShock, Assassin's Creed", [
+        "Batman: Arkham Asylum", "Batman: Arkham City", "BioShock", "BioShock Infinite",
+        "Assassin's Creed II", "Assassin's Creed: Brotherhood", "Assassin's Creed IV: Black Flag"
+    ]),
+    ("Exclusivités et cultes PS3", [
+        "LittleBigPlanet", "LittleBigPlanet 2", "Ratchet & Clank Future: Tools of Destruction",
+        "Ratchet & Clank: A Crack in Time", "Killzone 2", "Killzone 3",
+        "inFAMOUS", "inFAMOUS 2", "Heavy Rain", "Beyond: Two Souls",
+        "Gran Turismo 5", "Gran Turismo 6", "Resistance: Fall of Man", "MotorStorm",
+        "Ni no Kuni: Wrath of the White Witch", "Dark Souls", "Persona 5",
+        "Valkyria Chronicles", "Journey Collector's Edition", "Skyrim"
+    ]),
+]
+
+PS4 = [
+    ("Top 7 PS4", [
+        "Bloodborne", "God of War", "The Last of Us Part II", "Marvel's Spider-Man",
+        "Horizon Zero Dawn", "Red Dead Redemption 2", "Uncharted 4: A Thief's End"
+    ]),
+    ("Suites : Spider-Man, Uncharted, The Last of Us", [
+        "Marvel's Spider-Man: Miles Morales", "Uncharted: The Lost Legacy",
+        "The Last of Us Remastered", "Uncharted: The Nathan Drake Collection"
+    ]),
+    ("Exclusivités PS4", [
+        "Ghost of Tsushima", "Days Gone", "Death Stranding", "Detroit: Become Human",
+        "Until Dawn", "Gran Turismo Sport", "Ratchet & Clank", "Persona 5 Royal",
+        "Nioh", "Nioh 2", "Shadow of the Colossus", "Crash Bandicoot N. Sane Trilogy",
+        "Spyro Reignited Trilogy"
+    ]),
+    ("Incontournables multi-plateformes", [
+        "The Witcher 3: Wild Hunt", "Sekiro: Shadows Die Twice", "Dark Souls III",
+        "Resident Evil 2", "Final Fantasy VII Remake", "Monster Hunter: World",
+        "Grand Theft Auto V", "Elden Ring"
+    ]),
+]
+
+PS5 = [
+    ("Top 7 PS5", [
+        "Elden Ring", "God of War Ragnarök", "Marvel's Spider-Man 2", "Astro Bot",
+        "Demon's Souls", "Ratchet & Clank: Rift Apart", "Final Fantasy XVI"
+    ]),
+    ("Suites et remakes", [
+        "Horizon Forbidden West", "Marvel's Spider-Man: Miles Morales",
+        "The Last of Us Part I", "Final Fantasy VII Rebirth", "Resident Evil 4",
+        "Ghost of Tsushima Director's Cut", "Gran Turismo 7"
+    ]),
+    ("Autres incontournables PS5", [
+        "Returnal", "Stellar Blade", "Black Myth: Wukong", "Baldur's Gate 3",
+        "Hogwarts Legacy", "Alan Wake 2", "Dragon's Dogma 2", "Metaphor: ReFantazio",
+        "Silent Hill 2", "Sackboy: A Big Adventure"
+    ]),
+]
+
+XBOX = [
+    ("Top 7 Xbox", [
+        "Halo: Combat Evolved", "Halo 2", "Star Wars: Knights of the Old Republic",
+        "Fable", "Ninja Gaiden Black", "Project Gotham Racing 2", "Jade Empire"
+    ]),
+    ("Suites et séries Xbox", [
+        "Star Wars: Knights of the Old Republic II", "Splinter Cell: Chaos Theory",
+        "Forza Motorsport", "Conker: Live & Reloaded", "Ninja Gaiden",
+        "Grand Theft Auto: San Andreas", "Burnout 3: Takedown"
+    ]),
+    ("Cultes Xbox", [
+        "Jet Set Radio Future", "Panzer Dragoon Orta", "Psychonauts", "Fable: The Lost Chapters",
+        "The Elder Scrolls III: Morrowind", "Max Payne 2", "Crimson Skies: High Road to Revenge",
+        "Steel Battalion"
+    ]),
+]
+
+XONE = [
+    ("Top 7 Xbox One", [
+        "Halo 5: Guardians", "Forza Horizon 4", "Gears 5", "Ori and the Will of the Wisps",
+        "Halo: The Master Chief Collection", "Sea of Thieves", "Cuphead"
+    ]),
+    ("Suites : Forza, Gears, Halo", [
+        "Forza Horizon 3", "Forza Motorsport 7", "Gears of War 4",
+        "Gears of War: Ultimate Edition", "Halo Wars 2"
+    ]),
+    ("Exclusivités et cultes Xbox One", [
+        "Ori and the Blind Forest: Definitive Edition", "Quantum Break", "Sunset Overdrive",
+        "Titanfall", "Rare Replay", "State of Decay 2", "ReCore", "Ryse: Son of Rome",
+        "The Witcher 3: Wild Hunt", "Red Dead Redemption 2"
+    ]),
+]
+
+XSERIES = [
+    ("Top 7 Xbox Series", [
+        "Halo Infinite", "Forza Horizon 5", "Starfield", "Forza Motorsport",
+        "Indiana Jones and the Great Circle", "Microsoft Flight Simulator", "Hi-Fi Rush"
+    ]),
+    ("Autres incontournables Xbox Series", [
+        "Avowed", "Senua's Saga: Hellblade II", "Gears of War: E-Day", "Elden Ring",
+        "Baldur's Gate 3", "Diablo IV", "Call of Duty: Black Ops 6", "Alan Wake 2",
+        "Black Myth: Wukong", "Starfield Constellation Edition"
+    ]),
+]
+
 # (étiquette courte, nom complet, sections, slug PriceCharting, nom console PriceCharting)
 CONSOLES = [
     ("PS2", "PlayStation 2", PS2, "pal-playstation-2", "PAL Playstation 2"),
@@ -432,6 +541,12 @@ CONSOLES = [
     ("Wii", "Wii", WII, "pal-wii", "PAL Wii"),
     ("GC", "GameCube", GC, "pal-gamecube", "PAL Gamecube"),
     ("Switch", "Nintendo Switch", SWITCH, "pal-nintendo-switch", "PAL Nintendo Switch"),
+    ("PS3", "PlayStation 3", PS3, "pal-playstation-3", "PAL Playstation 3"),
+    ("PS4", "PlayStation 4", PS4, "pal-playstation-4", "PAL Playstation 4"),
+    ("PS5", "PlayStation 5", PS5, "pal-playstation-5", "PAL Playstation 5"),
+    ("Xbox", "Xbox", XBOX, "pal-xbox", "PAL Xbox"),
+    ("One", "Xbox One", XONE, "pal-xbox-one", "PAL Xbox One"),
+    ("Series", "Xbox Series X", XSERIES, "pal-xbox-series-x", "PAL Xbox Series X"),
 ]
 LABELS = [c[0] for c in CONSOLES]
 FULL_NAME = {c[0]: c[1] for c in CONSOLES}
@@ -480,6 +595,12 @@ US_PC = {
     "Wii": ("wii", "Wii"),
     "GC": ("gamecube", "Gamecube"),
     "Switch": ("nintendo-switch", "Nintendo Switch"),
+    "PS3": ("playstation-3", "Playstation 3"),
+    "PS4": ("playstation-4", "Playstation 4"),
+    "PS5": ("playstation-5", "Playstation 5"),
+    "Xbox": ("xbox", "Xbox"),
+    "One": ("xbox-one", "Xbox One"),
+    "Series": ("xbox-series-x", "Xbox Series X"),
 }
 
 # condition : (id de la cote sur la page du jeu, bloc des ventes, champ API, colonne recherche)
@@ -1614,7 +1735,8 @@ EDITION = {"platinum", "essentials", "classics", "greatest", "hits", "selects", 
            "player", "choice", "edition", "special", "limited", "collectors", "collector",
            "steelbook", "version", "budget", "best", "favourites", "favorites", "pal",
            "uk", "fr", "french", "german", "italian", "spanish", "value", "nintendo",
-           "playstation", "ps2", "wii", "xbox", "360", "ds", "3ds", "gamecube", "switch",
+           "playstation", "ps2", "ps3", "ps4", "ps5", "wii", "xbox", "360", "ds", "3ds",
+           "gamecube", "switch", "one", "series", "remastered", "hits", "playstation-hits",
            "n64", "game", "video", "standard", "reprint", "new", "big"}
 BAD = {"demo", "promo", "manual", "guide", "strategy", "case", "only", "soundtrack",
        "amiibo", "controller", "bundle", "console", "system", "pack", "box", "art",
