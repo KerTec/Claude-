@@ -71,6 +71,7 @@ CSV_FILE = os.path.join(DOCS, "valeur_collection.csv")
 DEBUG_FILE = os.path.join(DOCS, "debug_pricecharting.html")
 TOKEN_FILE = os.path.join(DOCS, "pricecharting_token.txt")
 COVER_DIR = os.path.join(DOCS, "jaquettes")
+FULL_DIR = os.path.join(DOCS, "catalogue_complet")   # tous les jeux de chaque console
 BACKUP_DIR = os.path.join(DOCS, "sauvegardes_collection")  # copies de sécurité
 BACKUP_KEEP = 30            # nombre de sauvegardes gardées
 BACKUP_EVERY = 3600         # sauvegarde automatique au plus toutes les heures
@@ -89,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.17 (09/11/2026)"
+APP_VERSION = "3.19 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -422,6 +423,115 @@ SWITCH = [
     ])
 ]
 
+
+PS3 = [
+    ("Top 7 PS3", [
+        "The Last of Us", "Uncharted 2: Among Thieves", "Red Dead Redemption",
+        "Grand Theft Auto V", "Demon's Souls", "Metal Gear Solid 4: Guns of the Patriots",
+        "God of War III"
+    ]),
+    ("Suites : Uncharted et God of War", [
+        "Uncharted: Drake's Fortune", "Uncharted 3: Drake's Deception",
+        "God of War Collection", "God of War: Ascension"
+    ]),
+    ("Suites : Batman, BioShock, Assassin's Creed", [
+        "Batman: Arkham Asylum", "Batman: Arkham City", "BioShock", "BioShock Infinite",
+        "Assassin's Creed II", "Assassin's Creed: Brotherhood", "Assassin's Creed IV: Black Flag"
+    ]),
+    ("Exclusivités et cultes PS3", [
+        "LittleBigPlanet", "LittleBigPlanet 2", "Ratchet & Clank Future: Tools of Destruction",
+        "Ratchet & Clank: A Crack in Time", "Killzone 2", "Killzone 3",
+        "inFAMOUS", "inFAMOUS 2", "Heavy Rain", "Beyond: Two Souls",
+        "Gran Turismo 5", "Gran Turismo 6", "Resistance: Fall of Man", "MotorStorm",
+        "Ni no Kuni: Wrath of the White Witch", "Dark Souls", "Persona 5",
+        "Valkyria Chronicles", "Journey Collector's Edition", "Skyrim"
+    ]),
+]
+
+PS4 = [
+    ("Top 7 PS4", [
+        "Bloodborne", "God of War", "The Last of Us Part II", "Marvel's Spider-Man",
+        "Horizon Zero Dawn", "Red Dead Redemption 2", "Uncharted 4: A Thief's End"
+    ]),
+    ("Suites : Spider-Man, Uncharted, The Last of Us", [
+        "Marvel's Spider-Man: Miles Morales", "Uncharted: The Lost Legacy",
+        "The Last of Us Remastered", "Uncharted: The Nathan Drake Collection"
+    ]),
+    ("Exclusivités PS4", [
+        "Ghost of Tsushima", "Days Gone", "Death Stranding", "Detroit: Become Human",
+        "Until Dawn", "Gran Turismo Sport", "Ratchet & Clank", "Persona 5 Royal",
+        "Nioh", "Nioh 2", "Shadow of the Colossus", "Crash Bandicoot N. Sane Trilogy",
+        "Spyro Reignited Trilogy"
+    ]),
+    ("Incontournables multi-plateformes", [
+        "The Witcher 3: Wild Hunt", "Sekiro: Shadows Die Twice", "Dark Souls III",
+        "Resident Evil 2", "Final Fantasy VII Remake", "Monster Hunter: World",
+        "Grand Theft Auto V", "Elden Ring"
+    ]),
+]
+
+PS5 = [
+    ("Top 7 PS5", [
+        "Elden Ring", "God of War Ragnarök", "Marvel's Spider-Man 2", "Astro Bot",
+        "Demon's Souls", "Ratchet & Clank: Rift Apart", "Final Fantasy XVI"
+    ]),
+    ("Suites et remakes", [
+        "Horizon Forbidden West", "Marvel's Spider-Man: Miles Morales",
+        "The Last of Us Part I", "Final Fantasy VII Rebirth", "Resident Evil 4",
+        "Ghost of Tsushima Director's Cut", "Gran Turismo 7"
+    ]),
+    ("Autres incontournables PS5", [
+        "Returnal", "Stellar Blade", "Black Myth: Wukong", "Baldur's Gate 3",
+        "Hogwarts Legacy", "Alan Wake 2", "Dragon's Dogma 2", "Metaphor: ReFantazio",
+        "Silent Hill 2", "Sackboy: A Big Adventure"
+    ]),
+]
+
+XBOX = [
+    ("Top 7 Xbox", [
+        "Halo: Combat Evolved", "Halo 2", "Star Wars: Knights of the Old Republic",
+        "Fable", "Ninja Gaiden Black", "Project Gotham Racing 2", "Jade Empire"
+    ]),
+    ("Suites et séries Xbox", [
+        "Star Wars: Knights of the Old Republic II", "Splinter Cell: Chaos Theory",
+        "Forza Motorsport", "Conker: Live & Reloaded", "Ninja Gaiden",
+        "Grand Theft Auto: San Andreas", "Burnout 3: Takedown"
+    ]),
+    ("Cultes Xbox", [
+        "Jet Set Radio Future", "Panzer Dragoon Orta", "Psychonauts", "Fable: The Lost Chapters",
+        "The Elder Scrolls III: Morrowind", "Max Payne 2", "Crimson Skies: High Road to Revenge",
+        "Steel Battalion"
+    ]),
+]
+
+XONE = [
+    ("Top 7 Xbox One", [
+        "Halo 5: Guardians", "Forza Horizon 4", "Gears 5", "Ori and the Will of the Wisps",
+        "Halo: The Master Chief Collection", "Sea of Thieves", "Cuphead"
+    ]),
+    ("Suites : Forza, Gears, Halo", [
+        "Forza Horizon 3", "Forza Motorsport 7", "Gears of War 4",
+        "Gears of War: Ultimate Edition", "Halo Wars 2"
+    ]),
+    ("Exclusivités et cultes Xbox One", [
+        "Ori and the Blind Forest: Definitive Edition", "Quantum Break", "Sunset Overdrive",
+        "Titanfall", "Rare Replay", "State of Decay 2", "ReCore", "Ryse: Son of Rome",
+        "The Witcher 3: Wild Hunt", "Red Dead Redemption 2"
+    ]),
+]
+
+XSERIES = [
+    ("Top 7 Xbox Series", [
+        "Halo Infinite", "Forza Horizon 5", "Starfield", "Forza Motorsport",
+        "Indiana Jones and the Great Circle", "Microsoft Flight Simulator", "Hi-Fi Rush"
+    ]),
+    ("Autres incontournables Xbox Series", [
+        "Avowed", "Senua's Saga: Hellblade II", "Gears of War: E-Day", "Elden Ring",
+        "Baldur's Gate 3", "Diablo IV", "Call of Duty: Black Ops 6", "Alan Wake 2",
+        "Black Myth: Wukong", "Starfield Constellation Edition"
+    ]),
+]
+
 # (étiquette courte, nom complet, sections, slug PriceCharting, nom console PriceCharting)
 CONSOLES = [
     ("PS2", "PlayStation 2", PS2, "pal-playstation-2", "PAL Playstation 2"),
@@ -432,6 +542,12 @@ CONSOLES = [
     ("Wii", "Wii", WII, "pal-wii", "PAL Wii"),
     ("GC", "GameCube", GC, "pal-gamecube", "PAL Gamecube"),
     ("Switch", "Nintendo Switch", SWITCH, "pal-nintendo-switch", "PAL Nintendo Switch"),
+    ("PS3", "PlayStation 3", PS3, "pal-playstation-3", "PAL Playstation 3"),
+    ("PS4", "PlayStation 4", PS4, "pal-playstation-4", "PAL Playstation 4"),
+    ("PS5", "PlayStation 5", PS5, "pal-playstation-5", "PAL Playstation 5"),
+    ("Xbox", "Xbox", XBOX, "pal-xbox", "PAL Xbox"),
+    ("One", "Xbox One", XONE, "pal-xbox-one", "PAL Xbox One"),
+    ("Series", "Xbox Series X", XSERIES, "pal-xbox-series-x", "PAL Xbox Series X"),
 ]
 LABELS = [c[0] for c in CONSOLES]
 FULL_NAME = {c[0]: c[1] for c in CONSOLES}
@@ -441,6 +557,7 @@ PC = {c[0]: (c[3], c[4]) for c in CONSOLES}
 GAMES_BY = {
     c[0]: list(dict.fromkeys(g for _, games in c[2] for g in games)) for c in CONSOLES
 }
+SEL_SET = {l: set(g) for l, g in GAMES_BY.items()}
 
 # Noms à chercher sur PriceCharting quand le titre du catalogue est en français
 # ou différent du titre PAL anglais utilisé par le site.
@@ -480,6 +597,12 @@ US_PC = {
     "Wii": ("wii", "Wii"),
     "GC": ("gamecube", "Gamecube"),
     "Switch": ("nintendo-switch", "Nintendo Switch"),
+    "PS3": ("playstation-3", "Playstation 3"),
+    "PS4": ("playstation-4", "Playstation 4"),
+    "PS5": ("playstation-5", "Playstation 5"),
+    "Xbox": ("xbox", "Xbox"),
+    "One": ("xbox-one", "Xbox One"),
+    "Series": ("xbox-series-x", "Xbox Series X"),
 }
 
 # condition : (id de la cote sur la page du jeu, bloc des ventes, champ API, colonne recherche)
@@ -991,12 +1114,16 @@ class Collection:
             return game in s
 
     def owned_games(self, label):
-        """Jeux possédés de la liste, dans l'ordre du catalogue."""
+        """Jeux possédés : ceux de la sélection (ordre du catalogue), puis les autres
+        (catalogue complet)."""
         s = self.owned[label]
-        return [g for g in GAMES_BY[label] if g in s]
+        return [g for g in GAMES_BY[label] if g in s] + \
+            sorted(g for g in s if g not in SEL_SET[label])
 
     def count(self, label):
-        return len(self.owned_games(label))
+        """Jeux possédés de la sélection (pour la progression)."""
+        s = self.owned[label]
+        return sum(1 for g in GAMES_BY[label] if g in s)
 
     def condition(self, label, game):
         return self.conditions.get(key_of(label, game), DEFAULT_COND)
@@ -1614,7 +1741,8 @@ EDITION = {"platinum", "essentials", "classics", "greatest", "hits", "selects", 
            "player", "choice", "edition", "special", "limited", "collectors", "collector",
            "steelbook", "version", "budget", "best", "favourites", "favorites", "pal",
            "uk", "fr", "french", "german", "italian", "spanish", "value", "nintendo",
-           "playstation", "ps2", "wii", "xbox", "360", "ds", "3ds", "gamecube", "switch",
+           "playstation", "ps2", "ps3", "ps4", "ps5", "wii", "xbox", "360", "ds", "3ds",
+           "gamecube", "switch", "one", "series", "remastered", "hits", "playstation-hits",
            "n64", "game", "video", "standard", "reprint", "new", "big"}
 BAD = {"demo", "promo", "manual", "guide", "strategy", "case", "only", "soundtrack",
        "amiibo", "controller", "bundle", "console", "system", "pack", "box", "art",
@@ -2199,6 +2327,119 @@ def load_image(path):
     return img
 
 
+# ====================================================================== catalogue complet
+NON_GAME = {"console", "system", "controller", "memory", "adapter", "cable", "headset",
+            "strategy", "guide", "manual", "kiosk", "camera", "remote", "charger", "steering",
+            "wheel", "microphone", "keyboard", "mouse", "faceplate", "battery", "dock",
+            "stylus", "sensor", "amiibo", "figure", "statue", "soundtrack", "artbook",
+            "poster", "skin", "case", "sleeve", "stand", "headphones", "vr", "move"}
+VARIANT_SKIP = re.compile(r"\[[^\]]*(demo|promo|resale|press|kiosk|disc only|manual)[^\]]*\]",
+                          re.I)
+
+
+def base_key(title):
+    """Titre sans la variante entre crochets ([Platinum], [Essentials]...)."""
+    return frozenset(title_tokens(re.sub(r"\[.*?\]", " ", title)))
+
+
+class FullCatalog:
+    """Tous les jeux d'une console, lus sur les listes PriceCharting (150 par page),
+    sans accessoires ni doublons d'édition. Gardé dans Documents/catalogue_complet/."""
+
+    def __init__(self):
+        self.data = {}
+        self.sel_keys = {}
+
+    def path(self, label):
+        return os.path.join(FULL_DIR, "%s.json" % label)
+
+    def get(self, label):
+        d = self.data.get(label)
+        if d is None:
+            raw = read_json(self.path(label))
+            d = raw if isinstance(raw, dict) and isinstance(raw.get("rows"), list) else \
+                {"rows": [], "form": None, "done": False, "ts": 0}
+            d["by"] = {r[0]: i for i, r in enumerate(d["rows"])}
+            d["bases"] = set(base_key(r[0]) for r in d["rows"])
+            self.data[label] = d
+        return d
+
+    def names(self, label):
+        return [r[0] for r in self.get(label)["rows"]]
+
+    def row(self, label, game):
+        if game in SEL_SET[label]:
+            return None
+        d = self.get(label)
+        i = d["by"].get(game)
+        return d["rows"][i] if i is not None else None
+
+    def index(self, label, game):
+        return self.get(label)["by"].get(game)
+
+    def done(self, label):
+        d = self.get(label)
+        return d.get("done") and time.time() - d.get("ts", 0) < CACHE_TTL
+
+    def selection_keys(self, label):
+        if label not in self.sel_keys:
+            self.sel_keys[label] = set(base_key(n) for g in GAMES_BY[label]
+                                       for n, k in name_variants(g) if k == 1.0)
+        return self.sel_keys[label]
+
+    def add_page(self, label, rows, form, first):
+        d = self.get(label)
+        if first:                             # 1re page (ou mise à jour mensuelle)
+            d["rows"], d["by"], d["bases"], d["pages"] = [], {}, set(), 0
+        d["pages"] = d.get("pages", 0) + 1
+        added = 0
+        sel = self.selection_keys(label)
+        for r in rows:
+            title = r["title"]
+            if VARIANT_SKIP.search(title) or (set(title_tokens(title)) & NON_GAME):
+                continue
+            base = base_key(title)
+            if not base or base in sel:
+                continue                      # déjà dans la sélection
+            if base in d["bases"]:
+                i = next((j for j, x in enumerate(d["rows"]) if base_key(x[0]) == base), None)
+                if i is not None and "[" in d["rows"][i][0] and "[" not in title:
+                    old = d["rows"][i][0]     # on préfère l'édition normale à [Platinum]
+                    d["rows"][i] = [title, r["url"], r["guide"].get("Disque seul"),
+                                    r["guide"].get("Complet"), r["guide"].get("Neuf"), r["img"]]
+                    d["by"].pop(old, None)
+                    d["by"][title] = i
+                continue
+            d["bases"].add(base)
+            d["by"][title] = len(d["rows"])
+            d["rows"].append([title, r["url"], r["guide"].get("Disque seul"),
+                              r["guide"].get("Complet"), r["guide"].get("Neuf"), r["img"]])
+            added += 1
+        d["form"] = form
+        d["done"] = form is None
+        d["ts"] = time.time()
+        self.save(label)
+        return added
+
+    def save(self, label):
+        d = self.get(label)
+        try:
+            os.makedirs(FULL_DIR, exist_ok=True)
+            write_json(self.path(label), {k: d.get(k) for k in ("rows", "form", "done", "ts",
+                                                                "pages")})
+        except OSError as e:
+            log("Catalogue complet %s non enregistré : %s" % (label, e), "ERREUR")
+
+    def entry(self, label, game):
+        r = self.row(label, game)
+        if not r:
+            return None
+        e = _entry(r[1], r[0], {"Disque seul": r[2], "Complet": r[3], "Neuf": r[4]}, {}, True,
+                   r[5], "PAL")
+        e["ts"] = self.get(label).get("ts", 0)
+        return e
+
+
 # ====================================================================== cerveau de l'app
 class App:
     """Données + chargement automatique des prix/jaquettes. Les vues s'y abonnent."""
@@ -2233,6 +2474,8 @@ class App:
         self.dirty_covers = set()
         self.status_dirty = False
         self.number = {l: {g: i + 1 for i, g in enumerate(GAMES_BY[l])} for l in LABELS}
+        self.full = FullCatalog()
+        self.full_wanted = set()   # consoles dont le catalogue complet est demandé
         self.section_of = {l: {} for l in LABELS}
         for l in LABELS:
             for s, games in SECTIONS_BY[l]:
@@ -2271,6 +2514,30 @@ class App:
         self.safe_mode = False
         self.start_loading()
         self.notify()
+
+    def full_step(self, label):
+        """Une page du catalogue complet (150 jeux)."""
+        d = self.full.get(label)
+        form = d.get("form") if not d.get("done") else None
+        first = form is None
+        page_no = 1 if first else d.get("pages", 0) + 1
+        self.set_status("Catalogue complet %s : %d jeux, page %d..." % (label, len(d["rows"]),
+                                                                       page_no))
+        try:
+            rows, nxt = fetch_console_list(label, form)
+        except Exception as ex:
+            log("Catalogue complet %s : %s" % (label, ex), "AVERT")
+            time.sleep(10)
+            return
+        added = self.full.add_page(label, rows, nxt, first)
+        if nxt is None:
+            log("Catalogue complet %s : %d jeux" % (label, len(d["rows"])))
+            self.set_status("Catalogue complet %s : %d jeux" % (label, len(d["rows"])))
+        elif page_no >= 80:
+            d["done"] = True
+            self.full.save(label)
+        if added or nxt is None:
+            self.notify(label, None)
 
     def _run_bulk(self, label):
         try:
@@ -2438,11 +2705,26 @@ class App:
     # ---------------------------------------------------------- lecture des données
     def entry(self, label, game):
         e = self.prices.get(key_of(label, game))
-        return e if PriceCache.has_price(e) else None
+        if PriceCache.has_price(e):
+            return e
+        return self.full.entry(label, game)
 
     def cover_url(self, label, game):
         e = self.prices.get(key_of(label, game))
-        return e.get("img") if e and e.get("v") == CACHE_VERSION else None
+        if e and e.get("v") == CACHE_VERSION and e.get("img"):
+            return e["img"]
+        r = self.full.row(label, game)
+        return r[5] if r else None
+
+    def num(self, label, game):
+        n = self.number[label].get(game)
+        if n is None:
+            i = self.full.index(label, game)
+            n = len(GAMES_BY[label]) + 1 + i if i is not None else 0
+        return n
+
+    def section(self, label, game):
+        return self.section_of[label].get(game) or "Catalogue complet"
 
     def price(self, label, game, cond=None):
         """{'mid','min','max','n','manual'} en euros, ou None."""
@@ -2528,6 +2810,8 @@ class App:
     # ---------------------------------------------------------- chargement automatique
     def _needs(self, label, game, full=False):
         key = key_of(label, game)
+        if not full and not self.prices.get(key) and self.full.row(label, game):
+            return False   # prix déjà donné par la liste du catalogue complet
         if full:
             e = self.prices.get(key)
             if self.prices.is_fresh(key) and not e.get("partial"):
@@ -2545,6 +2829,10 @@ class App:
             for g in self.coll.owned_games(l):
                 if self._needs(l, g):
                     return l, g, False
+        for l in ([self.focus] if self.focus in self.full_wanted else []) + \
+                sorted(self.full_wanted):
+            if not self.full.done(l):
+                return l, None, "complet"
         for l in ([self.focus] if self.focus else []) + LABELS:
             if self.bulk_needed(l):
                 return l, None, "liste"
@@ -2671,6 +2959,9 @@ class App:
         if full == "liste":
             self._run_bulk(label)
             return
+        if full == "complet":
+            self.full_step(label)
+            return
         key = key_of(label, game)
         self.loading = (label, game)
         try:
@@ -2682,7 +2973,8 @@ class App:
         self.set_status("Chargement %s : %s  (encore %d)" % (label, game, left))
         try:
             e = fetch_prices(label, game, fixed_url=self.coll.fixed_url(label, game),
-                             known_url=self.prices.known_url(key), full=full,
+                             known_url=self.prices.known_url(key) or (
+                                 (self.full.row(label, game) or [None, None])[1]), full=full,
                              token=None if full else read_token())
             old = self.prices.get(key)
             if not e.get("img") and old and old.get("img"):
@@ -3135,6 +3427,10 @@ class HomeScreen(Screen):
                 for g in games:
                     lines.append("%s %s" % ("[x]" if g in owned else "[ ]", g))
                 lines.append("")
+            extra = [g for g in sorted(owned) if g not in SEL_SET[label]]
+            if extra:
+                lines.append("Autres jeux possédés")
+                lines += ["[x] %s" % g for g in extra] + [""]
             lines.append("")
         try:
             import clipboard
@@ -3184,6 +3480,13 @@ class ConsoleScreen(Screen):
         self.filter_ctrl.action = self.filter_changed
         self.add_subview(self.filter_ctrl)
 
+        self.complete = False
+        self.scope_ctrl = ui.SegmentedControl()
+        self.scope_ctrl.segments = ["Sélection", "Catalogue complet"]
+        self.scope_ctrl.selected_index = 0
+        self.scope_ctrl.action = self.scope_changed
+        self.add_subview(self.scope_ctrl)
+
         self.quick_ctrl = ui.SegmentedControl()
         self.quick_ctrl.segments = ["Toucher : voir la fiche", "Toucher : cocher"]
         self.quick_ctrl.selected_index = 0
@@ -3213,6 +3516,9 @@ class ConsoleScreen(Screen):
 
     def on_data(self, label, game):
         if self.hidden or (label is not None and label != self.label):
+            return
+        if game is None and label is not None:
+            self.later(self.rebuild, 1.0)       # catalogue complet : nouvelle page
             return
         if label is None or self.sort_index in (1, 2) or self.filter_index:
             self.later(self.rebuild, 1.0)  # l'ordre ou le filtre peut changer
@@ -3247,6 +3553,13 @@ class ConsoleScreen(Screen):
         self.filter_index = sender.selected_index
         self.rebuild()
 
+    def scope_changed(self, sender):
+        self.complete = sender.selected_index == 1
+        if self.complete:
+            self.app.full_wanted.add(self.label)
+            self.app.wake.set()
+        self.rebuild()
+
     def quick_changed(self, sender):
         self.quick = sender.selected_index == 1
 
@@ -3263,6 +3576,9 @@ class ConsoleScreen(Screen):
         txt = "%d / %d obtenus" % (got, total)
         if got:
             txt += "   •   valeur %s" % eur(value)
+        if self.complete:
+            d = self.app.full.get(self.label)
+            txt += "   •   +%d jeux%s" % (len(d["rows"]), "" if d.get("done") else "…")
         self.summary.text = txt
 
     def matching(self):
@@ -3270,13 +3586,17 @@ class ConsoleScreen(Screen):
         owned = self.app.coll.owned[self.label]
         f = FILTERS[self.filter_index]
         out = []
-        for g in GAMES_BY[self.label]:
+        pool = list(GAMES_BY[self.label])
+        if self.complete:
+            pool += self.app.full.names(self.label)
+        pool += [g for g in sorted(owned) if g not in SEL_SET[self.label] and g not in pool]
+        for g in pool:
             if f == "Obtenus" and g not in owned:
                 continue
             if f == "Manquants" and g in owned:
                 continue
             if q and q not in normalize(g) and \
-                    q not in normalize(self.app.section_of[self.label].get(g, "")):
+                    q not in normalize(self.app.section(self.label, g)):
                 continue
             out.append(g)
         return out
@@ -3286,7 +3606,11 @@ class ConsoleScreen(Screen):
         items = []
         if self.sort_index == 0:  # ordre du catalogue, avec les titres de section
             seen = set()
-            for section, sgames in SECTIONS_BY[self.label]:
+            extra = [g for g in self.matching() if g not in SEL_SET[self.label]]
+            sections = list(SECTIONS_BY[self.label])
+            if extra:
+                sections.append(("Tous les autres jeux", extra))
+            for section, sgames in sections:
                 shown = [g for g in sgames if g in games and g not in seen]
                 if not shown:
                     continue
@@ -3296,7 +3620,7 @@ class ConsoleScreen(Screen):
                     seen.add(g)
                     items.append(("g", g))
         else:
-            lst = [g for g in GAMES_BY[self.label] if g in games]
+            lst = [g for g in self.matching()]
             if self.sort_index == 1:
                 lst.sort(key=lambda g: -((self.app.price(self.label, g) or {}).get("mid") or -1))
             elif self.sort_index == 2:
@@ -3465,6 +3789,8 @@ class ConsoleScreen(Screen):
         y += 40
         self.filter_ctrl.frame = (10, y, w - 20, 30)
         y += 36
+        self.scope_ctrl.frame = (10, y, w - 20, 30)
+        y += 36
         self.quick_ctrl.frame = (10, y, w - 20, 30)
         y += 36
         self.summary.frame = (12, y, w - 24, 18)
@@ -3534,7 +3860,7 @@ class Tile(ui.View):
         price = app.price(label, game)
         self.border_width = 2 if owned else 0.5
         self.border_color = (rar[3] if rar else t["owned"]) if owned else t["line"]
-        self.t_num.text = "#%03d" % app.number[label][game]
+        self.t_num.text = "#%03d" % app.num(label, game)
         self.t_ok_box.hidden = not owned
         self.t_title.text = game
         self.t_title.font = ("<System-Bold>" if owned else "<System>", 11)
@@ -3600,7 +3926,7 @@ class DetailScreen(Screen):
     def __init__(self, app, nav, label, game):
         super().__init__()
         self.app, self.nav, self.label, self.game = app, nav, label, game
-        self.screen_title = "#%03d  %s" % (app.number[label][game], label)
+        self.screen_title = "#%03d  %s" % (app.num(label, game), label)
         self.background_color = app.theme["bg"]
         self.scroll = ui.ScrollView()
         self.scroll.indicator_style = app.theme["indicator"]
@@ -3667,7 +3993,7 @@ class DetailScreen(Screen):
         sv.add_subview(make_label(game, (pad, y, w - 2 * pad, 52), 20, True, t["text"],
                                   "center", 2))
         y += 54
-        sv.add_subview(make_label("%s  •  %s" % (FULL_NAME[label], app.section_of[label][game]),
+        sv.add_subview(make_label("%s  •  %s" % (FULL_NAME[label], app.section(label, game)),
                                   (pad, y, w - 2 * pad, 18), 12, False, t["sub"], "center"))
         y += 24
         if rar:
