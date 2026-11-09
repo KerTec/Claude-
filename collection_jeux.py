@@ -41,6 +41,8 @@ puis colle-le dans la conversation.
 
 import collections
 import csv
+import glob
+import shutil
 import functools
 import hashlib
 import html as htmllib
@@ -68,9 +70,13 @@ CSV_FILE = os.path.join(DOCS, "valeur_collection.csv")
 DEBUG_FILE = os.path.join(DOCS, "debug_pricecharting.html")
 TOKEN_FILE = os.path.join(DOCS, "pricecharting_token.txt")
 COVER_DIR = os.path.join(DOCS, "jaquettes")
+BACKUP_DIR = os.path.join(DOCS, "sauvegardes_collection")  # copies de sécurité
+BACKUP_KEEP = 30            # nombre de sauvegardes gardées
+BACKUP_EVERY = 3600         # sauvegarde automatique au plus toutes les heures
 
 CACHE_VERSION = 3           # change si le format du cache change (l'ancien est ignoré)
 CACHE_TTL = 30 * 24 * 3600  # un prix est gardé 30 jours (les cotes bougent peu)
+BULK_PAGES = 4              # chargement rapide : pages « liste de la console » lues (150 jeux/page)
 ERR_TTL = 6 * 3600          # jeu introuvable : nouvel essai automatique 6 h plus tard
 RETRY_SOON = 5 * 60         # erreur passagère (réseau, anti-robot) : nouvel essai 5 min plus tard
 MIN_GAP = 3.5               # au moins 3,5 s (+ 0 à 1,5 s au hasard) entre deux requêtes
@@ -82,7 +88,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.10 (09/11/2026)"
+APP_VERSION = "3.11 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -780,8 +786,10 @@ def script_path():
 
 
 def install_update(code):
-    """Remplace ce script par la nouvelle version (vérifiée avant d'écrire)."""
+    """Remplace ce script par la nouvelle version (vérifiée avant d'écrire).
+    La collection n'est pas touchée, mais on en fait une copie de sécurité avant."""
     compile(code, "collection_jeux.py", "exec")  # refuse un fichier abîmé
+    backup_collection("avant-mise-a-jour")
     path = script_path()
     log("Installation de la mise à jour dans %s" % path)
     tmp = path + ".maj"
@@ -789,6 +797,70 @@ def install_update(code):
         f.write(code)
     os.replace(tmp, path)
     return path
+
+
+# ====================================================================== sauvegardes
+def is_collection(data):
+    return isinstance(data, dict) and any(k in data for k in LABELS)
+
+
+def collection_size(data):
+    return sum(len(v) for k, v in data.items() if k in LABELS and isinstance(v, list))
+
+
+def read_collection_file(path):
+    """Lit un fichier de collection ; 3 essais (une lecture peut échouer un instant)."""
+    for _ in range(3):
+        data = read_json(path)
+        if is_collection(data):
+            return data
+        if not os.path.exists(path):
+            return None
+        time.sleep(0.2)
+    return None
+
+
+def list_backups():
+    """[(chemin, date, nombre de jeux, raison)] du plus récent au plus ancien."""
+    out = []
+    for p in glob.glob(os.path.join(BACKUP_DIR, "collection_*.json")):
+        data = read_json(p)
+        if not is_collection(data):
+            continue
+        reason = os.path.basename(p)[len("collection_") + 16:-5].strip("_") or "auto"
+        out.append((p, os.path.getmtime(p), collection_size(data), reason))
+    out.sort(key=lambda b: b[1], reverse=True)
+    return out
+
+
+def backup_collection(reason):
+    """Copie datée de collection_jeux.json (si elle diffère de la dernière copie)."""
+    current = read_json(DATA_FILE) if os.path.exists(DATA_FILE) else None
+    if not is_collection(current) or collection_size(current) == 0:
+        return None                               # rien d'utile à sauvegarder
+    try:
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        with open(DATA_FILE, "rb") as f:
+            content = f.read()
+        backups = list_backups()
+        if backups:
+            with open(backups[0][0], "rb") as f:
+                if f.read() == content:
+                    return backups[0][0]          # rien n'a changé depuis
+        path = os.path.join(BACKUP_DIR, "collection_%s_%s.json"
+                            % (time.strftime("%Y%m%d-%H%M%S"), re.sub(r"\W+", "-", reason)))
+        with open(path, "wb") as f:
+            f.write(content)
+        backups = list_backups()
+        biggest = max(backups, key=lambda b: b[2])[0] if backups else None
+        for old in backups[BACKUP_KEEP:]:
+            if old[0] != biggest:                 # la plus complète est toujours gardée
+                os.remove(old[0])
+        log("Sauvegarde de la collection (%s) : %s" % (reason, os.path.basename(path)))
+        return path
+    except OSError as e:
+        log("Sauvegarde de la collection impossible : %s" % e, "ERREUR")
+        return None
 
 
 # ====================================================================== collection
@@ -801,35 +873,76 @@ class Collection:
         self.conditions = {}
         self.manual = {}
         self.urls = {}  # fiche PriceCharting choisie à la main : "PS2|jeu" -> url
+        self.source = "fichier"
+        self.last_backup = 0.0
         self.load()
 
+    def reload(self):
+        with self.lock:
+            self.owned = {label: set() for label in LABELS}
+            self.conditions, self.manual, self.urls = {}, {}, {}
+            self.load()
+
     def load(self):
-        data = read_json(DATA_FILE)
-        if isinstance(data, dict):
-            for label in LABELS:
-                items = data.get(label)
-                if isinstance(items, list):
-                    self.owned[label].update(g for g in items if isinstance(g, str))
-            conds = data.get("_conditions")
-            if isinstance(conds, dict):
-                self.conditions = {k: v for k, v in conds.items()
-                                   if isinstance(k, str) and v in COND}
-            manual = data.get("_manual")
-            if isinstance(manual, dict):
-                self.manual = {k: float(v) for k, v in manual.items()
-                               if isinstance(k, str) and isinstance(v, (int, float))
-                               and not isinstance(v, bool) and v >= 0}
-            urls = data.get("_urls")
-            if isinstance(urls, dict):
-                self.urls = {k: v for k, v in urls.items()
-                             if isinstance(k, str) and isinstance(v, str) and "/game/" in v}
+        """Charge la collection. Ne l'écrase JAMAIS : si le fichier est illisible, il est
+        mis de côté et la dernière sauvegarde est rechargée à la place."""
+        data = read_collection_file(DATA_FILE)
+        self.source = "fichier"
+        if data is None and os.path.exists(DATA_FILE):
+            kept = DATA_FILE.replace(".json", "_illisible_%s.json" % time.strftime("%Y%m%d-%H%M%S"))
+            try:
+                shutil.copy2(DATA_FILE, kept)
+            except OSError:
+                pass
+            log("Fichier de collection illisible, mis de côté : %s" % os.path.basename(kept),
+                "ALERTE")
+        if data is None:
+            for path, _, count, _ in list_backups():
+                data = read_collection_file(path)
+                if data is not None:
+                    self.source = "sauvegarde %s" % os.path.basename(path)
+                    log("Collection rechargée depuis la sauvegarde %s (%d jeux)"
+                        % (os.path.basename(path), count), "ALERTE")
+                    break
+        if data is not None:
+            self.apply(data)
+            log("Collection chargée (%s) : %d jeux" % (self.source, self.total()))
+            if self.source != "fichier":
+                self.save()       # remet la sauvegarde en place comme fichier principal
             return
+        # Vraiment aucune collection (ni fichier ni sauvegarde) : premier lancement.
         legacy = read_json(LEGACY_FILE)  # ancienne version (PS2 seule)
         if isinstance(legacy, list):
             self.owned["PS2"].update(g for g in legacy if isinstance(g, str))
+            self.source = "ancienne version (collection_ps2.json)"
         else:
             self.owned["PS2"].add("BLACK")  # premier lancement : BLACK déjà possédé
+            self.source = "nouvelle collection"
+        log("Collection créée (%s) : %d jeux" % (self.source, self.total()), "ALERTE")
         self.save()
+
+    def total(self):
+        return sum(len(v) for v in self.owned.values())
+
+    def apply(self, data):
+        """Applique le contenu d'un fichier de collection."""
+        for label in LABELS:
+            items = data.get(label)
+            if isinstance(items, list):
+                self.owned[label].update(g for g in items if isinstance(g, str))
+        conds = data.get("_conditions")
+        if isinstance(conds, dict):
+            self.conditions = {k: v for k, v in conds.items()
+                               if isinstance(k, str) and v in COND}
+        manual = data.get("_manual")
+        if isinstance(manual, dict):
+            self.manual = {k: float(v) for k, v in manual.items()
+                           if isinstance(k, str) and isinstance(v, (int, float))
+                           and not isinstance(v, bool) and v >= 0}
+        urls = data.get("_urls")
+        if isinstance(urls, dict):
+            self.urls = {k: v for k, v in urls.items()
+                         if isinstance(k, str) and isinstance(v, str) and "/game/" in v}
 
     def save(self):
         """Renvoie None si tout va bien, sinon le message d'erreur."""
@@ -843,6 +956,9 @@ class Collection:
             except OSError as e:
                 log("Sauvegarde de la collection impossible : %s" % e, "ERREUR")
                 return str(e)
+        if time.time() - self.last_backup > BACKUP_EVERY:   # copie de sécurité horaire
+            self.last_backup = time.time()
+            backup_collection("auto")
         return None
 
     def is_owned(self, label, game):
@@ -1050,19 +1166,24 @@ class WebFetcher:
         return self._js("location.hostname") == "www.pricecharting.com" and \
             "Just a moment" not in self._js("document.title")
 
-    def _fetch(self, url):
+    def _fetch(self, url, data=None):
         """Mode rapide : télécharge la page depuis la page déjà ouverte (cookies de la
         vérification inclus) SANS l'afficher : ni images, ni pubs, ni scripts.
         Renvoie (url finale, html), ou None s'il faut repasser par l'affichage."""
+        if data:   # formulaire « page suivante » (POST)
+            options = "{credentials: 'include', method: 'POST', headers: {'Content-Type': " \
+                      "'application/x-www-form-urlencoded'}, body: %s}" % json.dumps(urlencode(data))
+        else:
+            options = "{credentials: 'include'}"
         started = self._js(
             "window.__cj_res = null; window.__cj_txt = null;"
-            "fetch(%s, {credentials: 'include'}).then(function (r) {"
+            "fetch(%s, %s).then(function (r) {"
             "  return r.text().then(function (t) {"
             "    window.__cj_txt = t;"
             "    window.__cj_res = JSON.stringify({s: r.status, u: r.url, n: t.length});"
             "  });"
             "}).catch(function (e) { window.__cj_res = JSON.stringify({err: String(e)}); });"
-            "'ok'" % json.dumps(url))
+            "'ok'" % (json.dumps(url), options))
         if started != "ok":
             return None
         deadline = time.time() + 25
@@ -1092,13 +1213,13 @@ class WebFetcher:
             log("Navigateur intégré : mode rapide actif (pages téléchargées sans affichage)")
         return info.get("u") or url, page
 
-    def get(self, url):
+    def get(self, url, data=None):
         """Les pages sont toujours TÉLÉCHARGÉES (mode rapide). Le navigateur n'affiche
         que la page légère LIGHT_URL, pour passer la vérification anti-robot."""
         for attempt in range(2):
             if attempt or not self._on_site():
                 self._navigate(LIGHT_URL)     # vérification si besoin (page légère)
-            got = self._fetch(url)
+            got = self._fetch(url, data)
             if got:
                 return got
         raise Blocked("vérification anti-robot non passée")
@@ -1214,7 +1335,7 @@ class Fetcher:
             time.sleep(wait)
         self.last_request = time.time()
 
-    def _requests_get(self, url):
+    def _requests_get(self, url, data=None):
         import requests
         last_error = None
         for attempt in range(2):
@@ -1222,7 +1343,10 @@ class Fetcher:
                 time.sleep(5)
             self._pace()
             try:
-                r = self.session().get(url, timeout=20)
+                if data:
+                    r = self.session().post(url, data=data, timeout=20)
+                else:
+                    r = self.session().get(url, timeout=20)
             except requests.exceptions.Timeout:
                 last_error = "délai dépassé (site trop lent)"
                 continue
@@ -1244,7 +1368,8 @@ class Fetcher:
             return r.url, text
         raise PriceError(last_error or "échec de la connexion")
 
-    def get(self, url, params=None):
+    def get(self, url, params=None, data=None):
+        """GET (ou POST si « data » est fourni : pages suivantes d'une liste)."""
         """Renvoie (url finale, html)."""
         if params:
             url = url + ("&" if "?" in url else "?") + urlencode(params)
@@ -1256,7 +1381,7 @@ class Fetcher:
                 self.use_web = False
             if not self.use_web:
                 try:
-                    return self._requests_get(url)
+                    return self._requests_get(url, data)
                 except Blocked:
                     if self.ensure_web() is None:
                         self.blocked_until = time.time() + BLOCK_PAUSE
@@ -1266,7 +1391,7 @@ class Fetcher:
                     log("Requêtes directes bloquées : passage au navigateur intégré", "ALERTE")
             self._pace()
             try:
-                final, page = self.web.get(url)
+                final, page = self.web.get(url, data)
             except Blocked as ex:
                 self.blocked_until = time.time() + BLOCK_PAUSE
                 log("Navigateur intégré bloqué (%s) : pause %d min" % (ex, BLOCK_PAUSE // 60),
@@ -1351,6 +1476,51 @@ def parse_search(page, slug):
         results.append({"url": url.split("?")[0], "title": _clean_text(m.group(2)),
                         "guide": guide, "img": cover_url(im.group(1)) if im else None})
     return results
+
+
+def parse_console_page(page, slug):
+    """Page « liste d'une console » (150 jeux par page, du plus populaire au moins
+    populaire) : ([{url, title, guide, img}], champs du formulaire « page suivante »)."""
+    results = []
+    for chunk in re.split(r'<tr id="product-\d+"', page)[1:]:
+        chunk = chunk.split("</tr>", 1)[0]
+        m = re.search(r'<td class="title"[^>]*>\s*<a href="([^"]+)"[^>]*>(.*?)</a>', chunk, re.S)
+        if not m:
+            continue
+        url = m.group(1)
+        if url.startswith("/"):
+            url = BASE + url
+        if "/game/%s/" % slug not in url:
+            continue
+        guide = {}
+        for cond, v in COND.items():
+            p = re.search(r'<td class="price numeric %s">\s*<span class="js-price">\s*%s'
+                          % (v[3], AMOUNT), chunk)
+            guide[cond] = _amount(p.group(1)) if p else None
+        im = re.search(r'<img class="photo"[^>]*src="([^"]+)"', chunk)
+        results.append({"url": htmllib.unescape(url.split("?")[0]),
+                        "title": _clean_text(m.group(2)), "guide": guide,
+                        "img": cover_url(im.group(1)) if im else None})
+    form = re.search(r'<form[^>]*js-next-page[^>]*>(.*?)</form>', page, re.S)
+    nxt = None
+    if form:
+        nxt = dict(re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)"',
+                              form.group(1)))
+        if "cursor" not in nxt:
+            nxt = None
+    return results, nxt
+
+
+def exact_key(name):
+    return frozenset(title_tokens(name))
+
+
+def fetch_console_list(label, form=None):
+    """Une page de la liste d'une console (form=None : la 1re page)."""
+    slug, _ = PC[label]
+    url = BASE + "/console/" + slug
+    _, page = NET.get(url, data=form) if form else NET.get(url)
+    return parse_console_page(page, slug)
 
 
 def parse_game_page(page):
@@ -1945,6 +2115,25 @@ class App:
         self.start_loading()
         self.notify()
 
+    def _run_bulk(self, label):
+        try:
+            with open(JOB_FILE, "w", encoding="utf-8") as f:
+                f.write("%s|__liste__" % label)
+        except OSError:
+            pass
+        try:
+            self.bulk_console(label)
+        except Exception as ex:
+            log("Chargement rapide %s impossible (%s) : recherche jeu par jeu" % (label, ex),
+                "AVERT")
+            with self.prices.lock:   # on n'insiste pas : la recherche habituelle prend le relais
+                self.prices.data.setdefault("_bulk", {})[label] = time.time()
+        finally:
+            try:
+                os.remove(JOB_FILE)
+            except OSError:
+                pass
+
     def save_prices_soon(self):
         """Le fichier des prix (~300 Ko) est réécrit au plus toutes les 30 s pendant le
         chargement (au lieu d'après chaque jeu) : moins de batterie et d'usure.
@@ -1956,6 +2145,12 @@ class App:
     def set_poison(self, key):
         """Le jeu en cours de chargement a fait planter l'app : on le met de côté."""
         if "|" not in key:
+            return
+        if key.endswith("|__liste__"):   # la liste rapide a fait planter : on s'en passe
+            with self.prices.lock:
+                self.prices.data.setdefault("_bulk", {})[key.split("|")[0]] = time.time()
+            self.prices.save()
+            log("Chargement rapide abandonné pour %s (plantage)" % key.split("|")[0], "ALERTE")
             return
         self.prices.record_error(key, "a fait planter l'app pendant son chargement : mis de "
                                       "côté 7 jours (« Corriger la fiche » ou « Saisir mon "
@@ -2151,11 +2346,18 @@ class App:
         return self.prices.needs_fetch(key)
 
     def next_job(self):
-        """(console, jeu, page complète ?) : fiche ouverte, puis jeux possédés,
-        puis console affichée, puis tout le reste du catalogue (pour les jaquettes)."""
+        """(console, jeu, type) : fiche ouverte, puis jeux possédés, puis chargement
+        rapide des listes de console, puis console affichée, puis le reste du catalogue."""
         if self.priority and self._needs(self.priority[0], self.priority[1], True):
             return self.priority + (True,)
-        order = [[(l, g) for l in LABELS for g in self.coll.owned_games(l)]]
+        for l in LABELS:
+            for g in self.coll.owned_games(l):
+                if self._needs(l, g):
+                    return l, g, False
+        for l in ([self.focus] if self.focus else []) + LABELS:
+            if self.bulk_needed(l):
+                return l, None, "liste"
+        order = []
         if self.focus:
             order.append([(self.focus, g) for g in GAMES_BY[self.focus]])
         order.append([(l, g) for l in LABELS for g in GAMES_BY[l]])
@@ -2164,6 +2366,47 @@ class App:
                 if self._needs(l, g):
                     return l, g, False
         return None
+
+    def bulk_needed(self, label):
+        done = (self.prices.data.get("_bulk") or {}).get(label)
+        if isinstance(done, (int, float)) and time.time() - done < CACHE_TTL:
+            return False
+        return any(self._needs(label, g) for g in GAMES_BY[label])
+
+    def bulk_console(self, label):
+        """Chargement rapide : lit les pages « liste de la console » et remplit d'un coup
+        prix + jaquettes des jeux au titre IDENTIQUE. Les autres seront cherchés un par
+        un (recherche habituelle, plus sûre pour les titres approchants)."""
+        wanted = {}
+        for g in GAMES_BY[label]:
+            if self._needs(label, g) and not self.coll.fixed_url(label, g):
+                for name, k in name_variants(g):
+                    if k == 1.0:
+                        wanted.setdefault(exact_key(name), g)
+        found, form, page_no = 0, None, 0
+        while wanted and page_no < BULK_PAGES and not self.closed:
+            page_no += 1
+            self.set_status("Chargement rapide %s : page %d/%d (%d jeux trouvés)"
+                            % (label, page_no, BULK_PAGES, found))
+            rows, form = fetch_console_list(label, form)
+            for row in rows:
+                g = wanted.get(exact_key(row["title"]))
+                if g is None or not any(row["guide"].values()):
+                    continue
+                self.prices.put(key_of(label, g), _entry(
+                    row["url"], row["title"], row["guide"], {}, True, row["img"], "PAL"))
+                for kk in [kk for kk, gg in wanted.items() if gg == g]:
+                    del wanted[kk]
+                found += 1
+                if row["img"]:
+                    self.covers.want(row["img"])
+            self.notify()
+            if not form:
+                break
+        with self.prices.lock:
+            self.prices.data.setdefault("_bulk", {})[label] = time.time()
+        log("Chargement rapide %s : %d jeux en %d page(s)" % (label, found, page_no))
+        self.save_prices_soon()
 
     def remaining(self):
         return sum(1 for l in LABELS for g in GAMES_BY[l] if self.prices.needs_fetch(key_of(l, g)))
@@ -2205,6 +2448,9 @@ class App:
             self.prices.get_fx()
             self.fx_checked = True
         label, game, full = job
+        if full == "liste":
+            self._run_bulk(label)
+            return
         key = key_of(label, game)
         self.loading = (label, game)
         try:
@@ -3243,6 +3489,20 @@ def apply_update(version, code):
 
 
 # ====================================================================== journal / diagnostic
+def journal_actions():
+    """Ajouts/retraits de jeux notés dans le journal : [(ajout ?, console, jeu)]."""
+    out = []
+    try:
+        with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = re.search(r"Action : (ajout de|retrait de) (\S+) \| (.+)$", line.rstrip("\n"))
+                if m:
+                    out.append((m.group(1) == "ajout de", m.group(2), m.group(3)))
+    except OSError:
+        pass
+    return out
+
+
 def _tail(path, n):
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -3281,6 +3541,7 @@ def diagnostic(app):
     except OSError:
         covers = "aucune"
     priced = sum(1 for l in LABELS for g in GAMES_BY[l] if app.entry(l, g))
+    backups = list_backups()
     errors = [(l, g, app.error_of(l, g)) for l in LABELS for g in GAMES_BY[l]
               if app.error_of(l, g)]
     lines = [
@@ -3289,8 +3550,13 @@ def diagnostic(app):
         "Date : %s" % time.strftime("%d/%m/%Y %H:%M:%S"),
         "Appareil : %s" % _device_info(),
         "Stockage libre : %s" % free,
-        "Jeux possédés : %d / %d" % (sum(app.coll.count(l) for l in LABELS),
-                                     sum(len(GAMES_BY[l]) for l in LABELS)),
+        "Jeux possédés : %d / %d (chargée depuis : %s)" % (
+            sum(app.coll.count(l) for l in LABELS), sum(len(GAMES_BY[l]) for l in LABELS),
+            app.coll.source),
+        "Sauvegardes de la collection : %s" % (
+            "%d (dernière : %s, %d jeux)" % (len(backups), time.strftime(
+                "%d/%m %H:%M", time.localtime(backups[0][1])), backups[0][2])
+            if backups else "aucune"),
         "Prix connus : %d / %d   •   jeux sans prix (erreur) : %d" % (
             priced, sum(len(GAMES_BY[l]) for l in LABELS), len(errors)),
         "Jaquettes : %s (file d'attente %d, échecs %d)" % (
@@ -3343,6 +3609,9 @@ class JournalScreen(Screen):
         self.verify_btn = make_button("Faire la vérification PriceCharting", (0, 0, 10, 10),
                                       lambda s: self.verify(), t["field"], t["accent"], 13)
         self.add_subview(self.verify_btn)
+        self.restore_btn = make_button("Restaurer une sauvegarde de ma collection", (0, 0, 10, 10),
+                                       lambda s: self.restore(), t["field"], t["accent"], 13)
+        self.add_subview(self.restore_btn)
         for b in self.buttons:
             self.add_subview(b)
         self.tv = ui.TextView()
@@ -3363,7 +3632,61 @@ class JournalScreen(Screen):
             b.frame = (10 + i * (bw + 10), 44, bw, 34)
         self.update_btn.frame = (10, 86, w - 20, 34)
         self.verify_btn.frame = (10, 126, w - 20, 34)
-        self.tv.frame = (10, 168, w - 20, max(0, h - 178))
+        self.restore_btn.frame = (10, 166, w - 20, 34)
+        self.tv.frame = (10, 208, w - 20, max(0, h - 218))
+
+    @background
+    def restore(self):
+        import dialogs
+        backups = list_backups()
+        replay = journal_actions()
+        items, actions = [], []
+        for path, ts, count, reason in backups:
+            items.append("%s – %d jeux (%s)" % (time.strftime("%d/%m %H:%M", time.localtime(ts)),
+                                                 count, reason.replace("-", " ")))
+            actions.append(("backup", path))
+        if replay:
+            items.append("Reconstituer depuis le journal (%d ajouts/retraits notés)" % len(replay))
+            actions.append(("journal", None))
+        if not items:
+            alert("Aucune sauvegarde", "Il n'y a pas encore de sauvegarde ni d'action notée "
+                  "dans le journal.")
+            return
+        choice = dialogs.list_dialog("Restaurer (actuellement %d jeux)" % self.app.coll.total(),
+                                     items)
+        if not choice:
+            return
+        kind, path = actions[items.index(choice)]
+        try:
+            console.alert("Restaurer ?", "%s\n\nTa collection actuelle est d'abord sauvegardée : "
+                          "tu pourras revenir en arrière." % choice, "Restaurer")
+        except KeyboardInterrupt:
+            return
+        backup_collection("avant-restauration")
+        coll = self.app.coll
+        if kind == "backup":
+            data = read_collection_file(path)
+            if data is None:
+                alert("Sauvegarde illisible", os.path.basename(path))
+                return
+            with coll.lock:
+                coll.owned = {label: set() for label in LABELS}
+                coll.conditions, coll.manual, coll.urls = {}, {}, {}
+                coll.apply(data)
+        else:
+            with coll.lock:
+                for adding, label, game in replay:
+                    if label not in coll.owned:
+                        continue
+                    if adding:
+                        coll.owned[label].add(game)
+                    else:
+                        coll.owned[label].discard(game)
+        self.app.save()
+        log("Action : restauration (%s) -> %d jeux" % (choice, coll.total()), "ALERTE")
+        self.app.notify()
+        on_main(self.on_show)
+        alert("Collection restaurée", "%d jeux dans ta collection." % coll.total())
 
     def verify(self):
         if NET.make_web_now() is None:
@@ -3558,6 +3881,7 @@ def main():
             % (" après moins de 15 s (%d fois de suite)" % count if early else ""), "ALERTE")
     try:
         app = App()
+        backup_collection("lancement")       # copie de sécurité à chaque lancement
         app.interrupted = interrupted
         app.safe_mode = count >= 2
         if poison:
