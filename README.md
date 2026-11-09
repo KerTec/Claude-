@@ -27,13 +27,23 @@ l'accueil, ou Journal > « Rechercher une mise à jour »). Ta collection est ga
 ## Prix et jaquettes
 - Automatiques, **sans clé API** : source PriceCharting (versions PAL, ou US si le jeu
   n'est jamais sorti en Europe), convertis en euros au taux du jour.
-- Chargés en arrière-plan à un rythme tranquille (≈ 1 requête / 4 s). Au premier
-  lancement, compter ≈ 30 min pour tout le catalogue ; ensuite c'est gardé 30 jours.
+- Chargés en arrière-plan à un rythme tranquille (≈ 1 requête / 4 s). Chargement rapide :
+  les listes de chaque console (150 jeux par page) remplissent d'un coup la plupart des
+  jeux, les autres sont cherchés un par un. Ensuite c'est gardé 30 jours.
 - Si PriceCharting demande une vérification anti-robot, l'app bascule sur son navigateur
   intégré ; si une case « Je ne suis pas un robot » apparaît, l'app te l'affiche :
   touche-la et les prix reprennent. « Plus tard » met les prix en pause 30 min.
 - Si un jeu est mal reconnu : fiche du jeu > « Corriger la fiche » et coller le lien
   PriceCharting du bon jeu. Tu peux aussi saisir ton propre prix.
+
+## Ta collection est protégée
+- Copie de sécurité automatique dans `Documents/sauvegardes_collection/` : à chaque
+  lancement, toutes les heures et **avant chaque mise à jour** (30 dernières gardées,
+  la plus complète n'est jamais supprimée).
+- Si le fichier de la collection est abîmé ou disparaît, l'app recharge la dernière
+  sauvegarde au lieu de repartir de zéro (le fichier abîmé est mis de côté).
+- Journal > « Restaurer une sauvegarde » : choisir une sauvegarde (date + nombre de jeux)
+  ou « Reconstituer depuis le journal » (rejoue les ajouts/retraits notés).
 
 ## Un problème ?
 Accueil > « Journal / signaler un problème » > « Copier le rapport », puis colle-le à Claude.
@@ -44,5 +54,6 @@ Accueil > « Journal / signaler un problème » > « Copier le rapport », puis 
 | `collection_jeux.json` | jeux possédés, conditions, prix saisis, fiches corrigées |
 | `prix_cache.json` | prix déjà chargés |
 | `jaquettes/` | jaquettes téléchargées |
+| `sauvegardes_collection/` | copies de sécurité de ta collection |
 | `valeur_collection.csv` | dernier rapport de valeur |
 | `pricecharting_token.txt` | clé API PriceCharting (facultative) |
