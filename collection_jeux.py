@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.19 (09/11/2026)"
+APP_VERSION = "3.20 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -526,9 +526,9 @@ XSERIES = [
         "Indiana Jones and the Great Circle", "Microsoft Flight Simulator", "Hi-Fi Rush"
     ]),
     ("Autres incontournables Xbox Series", [
-        "Avowed", "Senua's Saga: Hellblade II", "Gears of War: E-Day", "Elden Ring",
+        "Cyberpunk 2077", "Assassin's Creed Mirage", "Hogwarts Legacy", "Elden Ring",
         "Baldur's Gate 3", "Diablo IV", "Call of Duty: Black Ops 6", "Alan Wake 2",
-        "Black Myth: Wukong", "Starfield Constellation Edition"
+        "Starfield Constellation Edition"
     ]),
 ]
 
@@ -576,6 +576,8 @@ SEARCH_ALIASES = {
     "Ace Combat Zero: The Belkan War": "Ace Combat: The Belkan War",
     "Star Fox 64": "Lylat Wars",
     "Xenosaga Episode I": "Xenosaga",
+    "Skyrim": "The Elder Scrolls V: Skyrim",
+    "Marvel's Spider-Man": "Marvel Spiderman",
     "Professor Layton and the Diabolical Box": "Professor Layton and Pandora's Box",
     "Professor Layton and the Unwound Future": "Professor Layton and the Lost Future",
     "Professor Layton and the Azran Legacies": "Professor Layton and the Azran Legacy",
