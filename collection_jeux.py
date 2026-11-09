@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.24 (09/11/2026)"
+APP_VERSION = "3.25 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -532,6 +532,141 @@ XSERIES = [
     ]),
 ]
 
+
+NES = [
+    ("Top 7 NES", [
+        "Super Mario Bros. 3", "The Legend of Zelda", "Metroid", "Mega Man 2",
+        "Castlevania", "Punch-Out!!", "Kirby's Adventure"
+    ]),
+    ("Suites et séries NES", [
+        "Super Mario Bros.", "Super Mario Bros. 2", "Zelda II: The Adventure of Link",
+        "Mega Man 3", "Castlevania III: Dracula's Curse", "Duck Tales", "Contra",
+        "Ninja Gaiden", "Tetris", "Final Fantasy", "Bubble Bobble", "Double Dragon II"
+    ]),
+]
+
+SNES = [
+    ("Top 7 Super Nintendo", [
+        "The Legend of Zelda: A Link to the Past", "Super Metroid", "Super Mario World",
+        "Chrono Trigger", "Donkey Kong Country", "Super Mario Kart", "Street Fighter II"
+    ]),
+    ("Suites et séries Super Nintendo", [
+        "Donkey Kong Country 2: Diddy's Kong Quest", "Donkey Kong Country 3",
+        "Super Mario World 2: Yoshi's Island", "Super Mario All-Stars", "Super Mario RPG",
+        "Final Fantasy VI", "Secret of Mana", "Kirby's Dream Land 3", "Star Fox",
+        "F-Zero", "Mega Man X", "Super Castlevania IV", "Super Probotector",
+        "Earthbound", "Street Fighter II Turbo", "Killer Instinct"
+    ]),
+]
+
+GB = [
+    ("Top 7 Game Boy", [
+        "Tetris", "Pokémon Red / Blue", "The Legend of Zelda: Link's Awakening",
+        "Super Mario Land 2: 6 Golden Coins", "Kirby's Dream Land", "Metroid II: Return of Samus",
+        "Wario Land: Super Mario Land 3"
+    ]),
+    ("Suites et séries Game Boy", [
+        "Super Mario Land", "Pokémon Yellow", "Donkey Kong", "Donkey Kong Land",
+        "Kirby's Dream Land 2", "Dr. Mario", "Mega Man: Dr. Wily's Revenge"
+    ]),
+]
+
+GBC = [
+    ("Top 7 Game Boy Color", [
+        "Pokémon Gold / Silver", "Pokémon Crystal", "The Legend of Zelda: Oracle of Ages",
+        "The Legend of Zelda: Oracle of Seasons", "Super Mario Bros. Deluxe",
+        "The Legend of Zelda: Link's Awakening DX", "Wario Land 3"
+    ]),
+    ("Autres incontournables Game Boy Color", [
+        "Pokémon Pinball", "Pokémon Trading Card Game", "Mario Tennis", "Mario Golf",
+        "Shantae", "Dragon Warrior Monsters", "Metal Gear Solid"
+    ]),
+]
+
+GBA = [
+    ("Top 7 Game Boy Advance", [
+        "Pokémon Emerald", "Metroid Fusion", "The Legend of Zelda: The Minish Cap",
+        "Advance Wars", "Mario Kart: Super Circuit", "Golden Sun", "Castlevania: Aria of Sorrow"
+    ]),
+    ("Suites et séries Game Boy Advance", [
+        "Pokémon Ruby / Sapphire", "Pokémon FireRed / LeafGreen", "Metroid: Zero Mission",
+        "Advance Wars 2: Black Hole Rising", "Golden Sun: The Lost Age",
+        "Mario & Luigi: Superstar Saga", "Fire Emblem", "Fire Emblem: The Sacred Stones",
+        "Super Mario Advance 4: Super Mario Bros. 3", "Kirby & the Amazing Mirror",
+        "WarioWare, Inc.: Minigame Mania", "The Legend of Zelda: A Link to the Past",
+        "Final Fantasy Tactics Advance", "Castlevania: Harmony of Dissonance"
+    ]),
+]
+
+MD = [
+    ("Top 7 Mega Drive", [
+        "Sonic the Hedgehog 2", "Streets of Rage 2", "Gunstar Heroes", "Sonic 3 & Knuckles",
+        "Phantasy Star IV", "Shining Force II", "Castlevania: The New Generation"
+    ]),
+    ("Suites et séries Mega Drive", [
+        "Sonic the Hedgehog", "Sonic the Hedgehog 3", "Sonic & Knuckles", "Streets of Rage",
+        "Streets of Rage 3", "Shining Force", "Golden Axe", "Ecco the Dolphin",
+        "Mickey Mania", "Aladdin", "The Lion King", "Earthworm Jim", "ToeJam & Earl",
+        "Comix Zone", "Shinobi III: Return of the Ninja Master"
+    ]),
+]
+
+MS = [
+    ("Top 7 Master System", [
+        "Alex Kidd in Miracle World", "Sonic the Hedgehog", "Phantasy Star",
+        "Wonder Boy III: The Dragon's Trap", "Castle of Illusion", "Psycho Fox", "R-Type"
+    ]),
+    ("Autres incontournables Master System", [
+        "Sonic the Hedgehog 2", "Golden Axe Warrior", "Land of Illusion", "Asterix",
+        "Shinobi", "OutRun", "Master of Darkness"
+    ]),
+]
+
+GG = [
+    ("Top 7 Game Gear", [
+        "Sonic the Hedgehog", "Sonic the Hedgehog 2", "Shinobi", "Columns",
+        "Sonic Triple Trouble", "The GG Shinobi II: The Silent Fury", "Mickey Mouse: Castle of Illusion"
+    ]),
+]
+
+PS1 = [
+    ("Top 7 PlayStation", [
+        "Final Fantasy VII", "Metal Gear Solid", "Castlevania: Symphony of the Night",
+        "Crash Bandicoot", "Gran Turismo", "Resident Evil 2", "Tekken 3"
+    ]),
+    ("Suites et séries PlayStation", [
+        "Crash Bandicoot 2: Cortex Strikes Back", "Crash Bandicoot 3: Warped", "Crash Team Racing",
+        "Spyro the Dragon", "Spyro 2: Gateway to Glimmer", "Spyro: Year of the Dragon",
+        "Final Fantasy VIII", "Final Fantasy IX", "Gran Turismo 2", "Resident Evil",
+        "Resident Evil 3: Nemesis", "Tomb Raider", "Tony Hawk's Pro Skater 2",
+        "Silent Hill", "Chrono Cross", "Oddworld: Abe's Oddysee", "Medievil", "Ape Escape",
+        "Vagrant Story", "Driver"
+    ]),
+]
+
+SATURN = [
+    ("Top 7 Saturn", [
+        "Panzer Dragoon Saga", "NiGHTS into Dreams", "Guardian Heroes", "Sega Rally Championship",
+        "Virtua Fighter 2", "Saturn Bomberman", "Radiant Silvergun"
+    ]),
+    ("Autres incontournables Saturn", [
+        "Panzer Dragoon", "Panzer Dragoon II Zwei", "Daytona USA", "Sonic Jam",
+        "Burning Rangers", "Dragon Force", "X-Men vs. Street Fighter"
+    ]),
+]
+
+DREAMCAST = [
+    ("Top 7 Dreamcast", [
+        "Shenmue", "Jet Set Radio", "Soulcalibur", "Crazy Taxi", "Sonic Adventure",
+        "Skies of Arcadia", "Power Stone 2"
+    ]),
+    ("Autres incontournables Dreamcast", [
+        "Shenmue II", "Sonic Adventure 2", "Resident Evil Code: Veronica", "Rez",
+        "Marvel vs. Capcom 2", "Ikaruga", "Phantasy Star Online", "Metropolis Street Racer",
+        "Space Channel 5", "Samba de Amigo"
+    ]),
+]
+
 # (étiquette courte, nom complet, sections, slug PriceCharting, nom console PriceCharting)
 CONSOLES = [
     ("PS2", "PlayStation 2", PS2, "pal-playstation-2", "PAL Playstation 2"),
@@ -548,6 +683,26 @@ CONSOLES = [
     ("Xbox", "Xbox", XBOX, "pal-xbox", "PAL Xbox"),
     ("One", "Xbox One", XONE, "pal-xbox-one", "PAL Xbox One"),
     ("Series", "Xbox Series X", XSERIES, "pal-xbox-series-x", "PAL Xbox Series X"),
+    ("NES", "NES", NES, "pal-nes", "PAL NES"),
+    ("SNES", "Super Nintendo", SNES, "pal-super-nintendo", "PAL Super Nintendo"),
+    ("GB", "Game Boy", GB, "pal-gameboy", "PAL GameBoy"),
+    ("GBC", "Game Boy Color", GBC, "pal-gameboy-color", "PAL GameBoy Color"),
+    ("GBA", "Game Boy Advance", GBA, "pal-gameboy-advance", "PAL GameBoy Advance"),
+    ("MD", "Mega Drive", MD, "pal-sega-mega-drive", "PAL Sega Mega Drive"),
+    ("MS", "Master System", MS, "pal-sega-master-system", "PAL Sega Master System"),
+    ("GG", "Game Gear", GG, "pal-sega-game-gear", "PAL Sega Game Gear"),
+    ("PS1", "PlayStation", PS1, "pal-playstation", "PAL Playstation"),
+    ("Saturn", "Saturn", SATURN, "pal-sega-saturn", "PAL Sega Saturn"),
+    ("DC", "Dreamcast", DREAMCAST, "pal-sega-dreamcast", "PAL Sega Dreamcast"),
+]
+
+# Familles affichées sur l'accueil (ordre d'affichage).
+FAMILIES = [
+    ("Rétro 2D", ["NES", "SNES", "GB", "GBC", "GBA", "MS", "MD", "GG"]),
+    ("Nintendo", ["N64", "GC", "Wii", "Switch", "DS", "3DS"]),
+    ("PlayStation", ["PS1", "PS2", "PS3", "PS4", "PS5"]),
+    ("Sega", ["Saturn", "DC"]),
+    ("Xbox", ["Xbox", "360", "One", "Series"]),
 ]
 LABELS = [c[0] for c in CONSOLES]
 FULL_NAME = {c[0]: c[1] for c in CONSOLES}
@@ -605,6 +760,12 @@ US_PC = {
     "Xbox": ("xbox", "Xbox"),
     "One": ("xbox-one", "Xbox One"),
     "Series": ("xbox-series-x", "Xbox Series X"),
+    "NES": ("nes", "NES"), "SNES": ("super-nintendo", "Super Nintendo"),
+    "GB": ("gameboy", "GameBoy"), "GBC": ("gameboy-color", "GameBoy Color"),
+    "GBA": ("gameboy-advance", "GameBoy Advance"), "MD": ("sega-genesis", "Sega Genesis"),
+    "MS": ("sega-master-system", "Sega Master System"), "GG": ("sega-game-gear", "Sega Game Gear"),
+    "PS1": ("playstation", "Playstation"), "Saturn": ("sega-saturn", "Sega Saturn"),
+    "DC": ("sega-dreamcast", "Sega Dreamcast"),
 }
 
 # condition : (id de la cote sur la page du jeu, bloc des ventes, champ API, colonne recherche)
@@ -3385,7 +3546,7 @@ class HomeScreen(Screen):
             got, pct, text = self.card_texts(label)
             cnt.text = "%d / %d" % (got, len(GAMES_BY[label]))
             cnt.text_color = t["owned"] if got else t["sub"]
-            fill.frame = (0, 0, max(8, track_w * pct), 8)
+            fill.frame = (0, 0, max(6, track_w * pct), 6)
             fill.hidden = not got
             sub.text = text
 
@@ -3393,11 +3554,9 @@ class HomeScreen(Screen):
         got, total = self.app.coll.count(label), len(GAMES_BY[label])
         value, known = self.app.console_value(label)
         pct = got / float(total) if total else 0
-        text = "%d %% complété" % round(pct * 100)
+        text = "%d %%" % round(pct * 100)
         if got:
-            text += "   •   valeur %s" % eur(value)
-            if known < got:
-                text += " (%d/%d prix)" % (known, got)
+            text += "  •  %s" % eur_short(value)
         return got, pct, text
 
     def on_status(self, text):
@@ -3469,16 +3628,20 @@ class HomeScreen(Screen):
                                      lambda s: self.open_journal(), t["field"], t["sub"], 13))
         sv.add_subview(card)
         y += 172 + pad
-        # --- une carte par console
-        cols = 2 if w >= 600 else 1
+        # --- consoles rangées par famille, en cartes compactes (2 par ligne sur iPhone)
+        cols = max(2, int((w - pad) // 190))
         cw = (w - pad * (cols + 1)) / cols
-        for i, (label, full, _, _, _) in enumerate(CONSOLES):
-            col = i % cols
-            if col == 0 and i:
-                y += 96 + 10
-            x = pad + col * (cw + pad)
-            sv.add_subview(self.console_card(label, full, (x, y, cw, 96)))
-        y += 96 + pad
+        ch, gap = 84, 10
+        for family, labels in FAMILIES:
+            sv.add_subview(make_label(family.upper(), (pad + 4, y, w, 18), 12, True, t["sub"]))
+            y += 24
+            for i, label in enumerate(labels):
+                col = i % cols
+                if col == 0 and i:
+                    y += ch + gap
+                x = pad + col * (cw + pad)
+                sv.add_subview(self.console_card(label, FULL_NAME[label], (x, y, cw, ch)))
+            y += ch + 18
         sv.content_size = (w, y)
         self.built_sig = self.layout_sig()
 
@@ -3486,23 +3649,22 @@ class HomeScreen(Screen):
         t = self.app.theme
         x, y, w, h = frame
         card = ui.View(frame=frame, background_color=t["card"])
-        card.corner_radius = 14
+        card.corner_radius = 12
         got, pct, text = self.card_texts(label)
-        card.add_subview(make_label(full, (16, 12, w - 120, 22), 17, True, t["text"]))
-        cnt = make_label("%d / %d" % (got, len(GAMES_BY[label])), (w - 110, 12, 94, 22), 15,
-                         True, t["owned"] if got else t["sub"], "right")
+        card.add_subview(make_label(full, (12, 9, w - 24, 20), 15, True, t["text"]))
+        cnt = make_label("%d / %d" % (got, len(GAMES_BY[label])), (12, 30, w - 24, 18), 13,
+                         True, t["owned"] if got else t["sub"])
         card.add_subview(cnt)
-        track = ui.View(frame=(16, 44, w - 32, 8), background_color=t["field"])
-        track.corner_radius = 4
-        fill = ui.View(frame=(0, 0, max(8, (w - 32) * pct), 8), background_color=t["owned"])
-        fill.corner_radius = 4
+        track = ui.View(frame=(12, 52, w - 24, 6), background_color=t["field"])
+        track.corner_radius = 3
+        fill = ui.View(frame=(0, 0, max(6, (w - 24) * pct), 6), background_color=t["owned"])
+        fill.corner_radius = 3
         fill.hidden = not got
         track.add_subview(fill)
         card.add_subview(track)
-        sub = make_label(text, (16, 60, w - 50, 22), 12, False, t["sub"])
+        sub = make_label(text, (12, 62, w - 24, 16), 11, False, t["sub"])
         card.add_subview(sub)
-        self.card_refs[label] = (cnt, fill, sub, w - 32)
-        card.add_subview(make_label("›", (w - 30, 56, 20, 26), 22, False, t["sub"], "right"))
+        self.card_refs[label] = (cnt, fill, sub, w - 24)
         b = ui.Button(frame=(0, 0, w, h))
         b.action = lambda s, l=label: self.nav.push(ConsoleScreen(self.app, self.nav, l))
         card.add_subview(b)
