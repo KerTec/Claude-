@@ -89,7 +89,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.16 (09/11/2026)"
+APP_VERSION = "3.17 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -884,6 +884,7 @@ class Collection:
         self.conditions = {}
         self.manual = {}
         self.urls = {}  # fiche PriceCharting choisie à la main : "PS2|jeu" -> url
+        self.added = {}  # "PS2|jeu" -> {"ts": date d'ajout, "p": prix (€) à cette date}
         self.source = "fichier"
         self.last_backup = 0.0
         self.load()
@@ -891,7 +892,7 @@ class Collection:
     def reload(self):
         with self.lock:
             self.owned = {label: set() for label in LABELS}
-            self.conditions, self.manual, self.urls = {}, {}, {}
+            self.conditions, self.manual, self.urls, self.added = {}, {}, {}, {}
             self.load()
 
     def load(self):
@@ -950,6 +951,10 @@ class Collection:
             self.manual = {k: float(v) for k, v in manual.items()
                            if isinstance(k, str) and isinstance(v, (int, float))
                            and not isinstance(v, bool) and v >= 0}
+        added = data.get("_added")
+        if isinstance(added, dict):
+            self.added = {k: v for k, v in added.items()
+                          if isinstance(k, str) and isinstance(v, dict)}
         urls = data.get("_urls")
         if isinstance(urls, dict):
             self.urls = {k: v for k, v in urls.items()
@@ -962,6 +967,7 @@ class Collection:
             payload["_conditions"] = dict(self.conditions)
             payload["_manual"] = dict(self.manual)
             payload["_urls"] = dict(self.urls)
+            payload["_added"] = dict(self.added)
             try:
                 write_json(DATA_FILE, payload, indent=2)
             except OSError as e:
@@ -2217,6 +2223,7 @@ class App:
         self.heartbeat = 0.0      # dernier passage de l'interface (détecteur de gel)
         self.first_beat = 0.0     # premier passage de l'interface
         self.last_prices_save = time.time()
+        self.added_dirty = False  # prix d'ajout figés à enregistrer
         self.bg_paused = False    # chargement en pause car l'app est en arrière-plan
         self.awake = False        # écran maintenu allumé pendant un gros chargement
         self.safe_mode = False    # démarrage sans chargement (après plantages répétés)
@@ -2382,6 +2389,8 @@ class App:
         self.covers.event.set()
         self.covers.save_colors()
         self.prices.save()
+        if self.added_dirty:
+            self.coll.save()
 
     # ---------------------------------------------------------- abonnements
     def subscribe(self, view):
@@ -2445,6 +2454,24 @@ class App:
             return None
         return estimate(e, cond or self.coll.condition(label, game), self.prices.fx_quick())
 
+    def delta(self, label, game):
+        """(prix à l'ajout, écart actuel) en €, ou None. Si le prix n'était pas connu à
+        l'ajout, il est figé dès qu'il le devient."""
+        if not self.coll.is_owned(label, game):
+            return None
+        p = self.price(label, game)
+        if not p:
+            return None
+        key = key_of(label, game)
+        rec = self.coll.added.get(key)
+        if not rec or rec.get("p") is None:
+            with self.coll.lock:
+                rec = self.coll.added.setdefault(key, {"ts": time.time()})
+                rec["p"] = round(p["mid"], 2)
+            self.added_dirty = True
+            return rec["p"], 0.0
+        return rec["p"], round(p["mid"] - rec["p"], 2)
+
     def rarity(self, label, game):
         e = self.entry(label, game)
         if not e:
@@ -2474,6 +2501,13 @@ class App:
     # ---------------------------------------------------------- actions
     def toggle(self, label, game):
         now = self.coll.toggle(label, game)
+        key = key_of(label, game)
+        with self.coll.lock:
+            if now:   # prix figé à la date d'ajout
+                p = self.price(label, game)
+                self.coll.added[key] = {"ts": time.time(), "p": round(p["mid"], 2) if p else None}
+            else:
+                self.coll.added.pop(key, None)
         log("Action : %s %s | %s" % ("ajout de" if now else "retrait de", label, game))
         self.save()
         self.notify(label, game)
@@ -2665,6 +2699,9 @@ class App:
         except OSError:
             pass
         self.save_prices_soon()
+        if self.added_dirty:
+            self.added_dirty = False
+            self.save()
         self.notify(label, game)   # la jaquette sera téléchargée quand elle s'affichera
 
 
@@ -2693,6 +2730,20 @@ def make_button(title, frame, action, color, text_color="white", size=14):
     b.action = action
     b.frame = frame
     return b
+
+
+UP, DOWN = "#34c759", "#ff3b30"
+
+
+def delta_text(d, short=False):
+    """(« ▲ +1,05 € » vert / « ▼ -1,05 € » rouge / « = »), couleur."""
+    if not d:
+        return "", "#8e8e93"
+    diff = d[1]
+    if abs(diff) < 0.01:
+        return ("=" if short else "= prix inchangé"), "#8e8e93"
+    s = eur(abs(diff)).replace(" €", "€") if short else eur(abs(diff))
+    return ("▲ +" + s, UP) if diff > 0 else ("▼ -" + s, DOWN)
 
 
 def make_pill(text, frame, size, bg, color="white", radius=None):
@@ -3452,10 +3503,11 @@ class Tile(ui.View):
         self.t_title = make_label("", (0, 0, 10, 10), 11, False, t["text"], "center", 2)
         self.t_price = make_label("", (0, 0, 10, 10), 11, True, t["text"])
         self.t_stars = make_label("", (0, 0, 10, 10), 10, False, t["sub"], "right")
+        self.t_delta = make_label("", (0, 0, 10, 10), 10, True, t["sub"], "center")
         self.t_btn = ui.Button()
         self.t_btn.action = lambda s: self.t_game and self.t_on_tap(self.t_game)
         for v in (self.t_ph, self.t_img, self.t_num_box, self.t_ok_box, self.t_title, self.t_price,
-                  self.t_stars,
+                  self.t_stars, self.t_delta,
                   self.t_btn):
             self.add_subview(v)
 
@@ -3465,8 +3517,9 @@ class Tile(ui.View):
         self.t_ph_label.frame = (0, (cover_h - 5) / 2 - 20, w - 10, 40)
         self.t_ok_box.frame = (w - 32, 8, 24, 24)
         self.t_title.frame = (5, cover_h + 2, w - 10, 30)
-        self.t_price.frame = (6, h - 19, w / 2, 15)
-        self.t_stars.frame = (w / 2 - 6, h - 19, w / 2, 15)
+        self.t_price.frame = (6, h - 19, w * 0.36, 15)
+        self.t_delta.frame = (w * 0.28, h - 19, w * 0.46, 15)
+        self.t_stars.frame = (w * 0.7 - 6, h - 19, w * 0.3, 15)
         self.t_btn.frame = (0, 0, w, h)
         self.t_size = (w, h)
 
@@ -3490,6 +3543,8 @@ class Tile(ui.View):
             self.t_price.text = ("✎ " if price.get("manual") else "") + eur_short(price["mid"])
         else:
             self.t_price.text = "prix ?" if app.error_of(label, game) else "…"
+        d = app.delta(label, game)
+        self.t_delta.text, self.t_delta.text_color = delta_text(d, short=True)
         self.t_stars.text = "★" * rar[2] if rar else ""
         self.t_stars.text_color = rar[3] if rar else t["sub"]
         self.t_show_cover()
@@ -3675,6 +3730,16 @@ class DetailScreen(Screen):
                         (14, cy, cw - 28, 16), 11, False, t["sub"]))
                     cy += 18
                 cy += 6
+            d = app.delta(label, game)
+            if d:
+                txt, col = delta_text(d)
+                rec = app.coll.added.get(key_of(label, game)) or {}
+                card.add_subview(make_label("Ajouté le %s à %s" % (
+                    time.strftime("%d/%m/%Y", time.localtime(rec.get("ts", time.time()))),
+                    eur(d[0])), (14, cy, cw * 0.6, 18), 12, False, t["sub"]))
+                card.add_subview(make_label(txt, (cw * 0.55, cy, cw * 0.45 - 14, 18), 13, True,
+                                            col, "right"))
+                cy += 24
             info = "Fiche PriceCharting : %s" % (e.get("title") or "?")
             if e.get("region") == "US":
                 info += " (version US : jeu non sorti en Europe)"
@@ -4016,7 +4081,7 @@ class JournalScreen(Screen):
                 return
             with coll.lock:
                 coll.owned = {label: set() for label in LABELS}
-                coll.conditions, coll.manual, coll.urls = {}, {}, {}
+                coll.conditions, coll.manual, coll.urls, coll.added = {}, {}, {}, {}
                 coll.apply(data)
         else:
             with coll.lock:
