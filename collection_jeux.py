@@ -88,7 +88,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.12 (09/11/2026)"
+APP_VERSION = "3.13 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -2553,7 +2553,7 @@ def make_button(title, frame, action, color, text_color="white", size=14):
 @guard_class
 class Screen(ui.View):
     """Écran poussé dans la pile de navigation."""
-    title = ""
+    screen_title = ""
 
     def on_data(self, label, game):
         pass
@@ -2613,7 +2613,7 @@ class AppView(ui.View):
         NET.web_host = self   # le navigateur intégré sera créé seulement s'il sert
 
     def push(self, screen):
-        log("Écran : %s" % (screen.title or type(screen).__name__))
+        log("Écran : %s" % (screen.screen_title or type(screen).__name__))
         if self.stack:
             self.stack[-1].on_hide()
             self.stack[-1].hidden = True
@@ -2639,7 +2639,7 @@ class AppView(ui.View):
 
     def _update_bar(self):
         top = self.stack[-1]
-        self.title_label.text = top.title
+        self.title_label.text = top.screen_title
         self.back.hidden = len(self.stack) <= 1
         if self.right:
             self.bar.remove_subview(self.right)
@@ -2686,7 +2686,7 @@ class AppView(ui.View):
 # ====================================================================== accueil
 @guard_class
 class HomeScreen(Screen):
-    title = "Ma collection"
+    screen_title = "Ma collection"
 
     def __init__(self, app, nav):
         super().__init__()
@@ -2917,7 +2917,7 @@ class ConsoleScreen(Screen):
         super().__init__()
         self.app, self.nav, self.label = app, nav, label
         t = app.theme
-        self.title = FULL_NAME[label]
+        self.screen_title = FULL_NAME[label]
         self.background_color = t["bg"]
         self.filter_index = 0
         self.sort_index = 0
@@ -2990,7 +2990,7 @@ class ConsoleScreen(Screen):
         for i, v in list(self.live.items()):
             kind, game = self.items[i]
             if kind == "g" and isinstance(v, Tile) and self.app.cover_url(self.label, game) == url:
-                v.show_cover()
+                v.t_show_cover()
 
     # ---------------------------------------------------------- contrôles
     def textfield_did_change(self, tf):
@@ -3154,7 +3154,7 @@ class ConsoleScreen(Screen):
         if v is None:
             return
         if isinstance(v, Tile):
-            v.release()
+            v.t_release()
             self.pool.append(v)
         else:
             self.scroll.remove_subview(v)
@@ -3182,7 +3182,7 @@ class ConsoleScreen(Screen):
     def redraw_index(self, i):
         v = self.live.get(i)
         if isinstance(v, Tile) and self.items[i][0] == "g":
-            v.show(self.label, self.items[i][1], self.frames[i])
+            v.t_fill(self.label, self.items[i][1], self.frames[i])
         elif v is not None:
             self.release(i)
             self.live[i] = self.make_view(i)
@@ -3204,7 +3204,7 @@ class ConsoleScreen(Screen):
             tile = Tile(self.app, self.tapped)
             self.scroll.add_subview(tile)
         tile.hidden = False
-        tile.show(self.label, value, frame)
+        tile.t_fill(self.label, value, frame)
         return tile
 
     def tapped(self, game):
@@ -3242,70 +3242,70 @@ class Tile(ui.View):
     def __init__(self, app, on_tap):
         super().__init__()
         t = app.theme
-        self.app, self.on_tap, self.game, self.size = app, on_tap, None, None
+        self.t_app, self.t_on_tap, self.t_game, self.t_size = app, on_tap, None, None
         self.background_color = t["card"]
         self.corner_radius = 10
-        self.ph = ui.View()                      # couleur d'attente
-        self.ph.corner_radius = 6
-        self.ph_label = make_label("", (0, 0, 10, 10), 30, True, t["sub"], "center")
-        self.ph.add_subview(self.ph_label)
-        self.iv = ui.ImageView()
-        self.iv.content_mode = ui.CONTENT_SCALE_ASPECT_FIT
-        self.num = make_label("", (8, 8, 44, 16), 10, True, "white", "center")
-        self.num.background_color = (0, 0, 0, 0.55)
-        self.num.corner_radius = 5
-        self.ok = make_label("✓", (0, 8, 22, 22), 14, True, "white", "center")
-        self.ok.background_color = t["owned"]
-        self.ok.corner_radius = 11
-        self.name = make_label("", (0, 0, 10, 10), 11, False, t["text"], "center", 2)
-        self.price = make_label("", (0, 0, 10, 10), 11, True, t["text"])
-        self.stars = make_label("", (0, 0, 10, 10), 10, False, t["sub"], "right")
-        self.btn = ui.Button()
-        self.btn.action = lambda s: self.game and self.on_tap(self.game)
-        for v in (self.ph, self.iv, self.num, self.ok, self.name, self.price, self.stars,
-                  self.btn):
+        self.t_ph = ui.View()                      # couleur d'attente
+        self.t_ph.corner_radius = 6
+        self.t_ph_label = make_label("", (0, 0, 10, 10), 30, True, t["sub"], "center")
+        self.t_ph.add_subview(self.t_ph_label)
+        self.t_img = ui.ImageView()
+        self.t_img.content_mode = ui.CONTENT_SCALE_ASPECT_FIT
+        self.t_num = make_label("", (8, 8, 44, 16), 10, True, "white", "center")
+        self.t_num.background_color = (0, 0, 0, 0.55)
+        self.t_num.corner_radius = 5
+        self.t_ok = make_label("✓", (0, 8, 22, 22), 14, True, "white", "center")
+        self.t_ok.background_color = t["owned"]
+        self.t_ok.corner_radius = 11
+        self.t_title = make_label("", (0, 0, 10, 10), 11, False, t["text"], "center", 2)
+        self.t_price = make_label("", (0, 0, 10, 10), 11, True, t["text"])
+        self.t_stars = make_label("", (0, 0, 10, 10), 10, False, t["sub"], "right")
+        self.t_btn = ui.Button()
+        self.t_btn.action = lambda s: self.t_game and self.t_on_tap(self.t_game)
+        for v in (self.t_ph, self.t_img, self.t_num, self.t_ok, self.t_title, self.t_price, self.t_stars,
+                  self.t_btn):
             self.add_subview(v)
 
-    def place(self, w, h):
+    def t_place(self, w, h):
         cover_h = h - 52
-        self.ph.frame = self.iv.frame = (5, 5, w - 10, cover_h - 5)
-        self.ph_label.frame = (0, (cover_h - 5) / 2 - 20, w - 10, 40)
-        self.ok.frame = (w - 30, 8, 22, 22)
-        self.name.frame = (5, cover_h + 2, w - 10, 30)
-        self.price.frame = (6, h - 19, w / 2, 15)
-        self.stars.frame = (w / 2 - 6, h - 19, w / 2, 15)
-        self.btn.frame = (0, 0, w, h)
-        self.size = (w, h)
+        self.t_ph.frame = self.t_img.frame = (5, 5, w - 10, cover_h - 5)
+        self.t_ph_label.frame = (0, (cover_h - 5) / 2 - 20, w - 10, 40)
+        self.t_ok.frame = (w - 30, 8, 22, 22)
+        self.t_title.frame = (5, cover_h + 2, w - 10, 30)
+        self.t_price.frame = (6, h - 19, w / 2, 15)
+        self.t_stars.frame = (w / 2 - 6, h - 19, w / 2, 15)
+        self.t_btn.frame = (0, 0, w, h)
+        self.t_size = (w, h)
 
-    def show(self, label, game, frame):
-        app, t = self.app, self.app.theme
+    def t_fill(self, label, game, frame):
+        app, t = self.t_app, self.t_app.theme
         self.frame = frame
-        if self.size != (frame[2], frame[3]):
-            self.place(frame[2], frame[3])
-        self.label, self.game = label, game
+        if self.t_size != (frame[2], frame[3]):
+            self.t_place(frame[2], frame[3])
+        self.t_console, self.t_game = label, game
         owned = app.coll.is_owned(label, game)
         rar = app.rarity(label, game)
         price = app.price(label, game)
         self.border_width = 2 if owned else 0.5
         self.border_color = (rar[3] if rar else t["owned"]) if owned else t["line"]
-        self.num.text = "#%03d" % app.number[label][game]
-        self.ok.hidden = not owned
-        self.name.text = game
-        self.name.font = ("<System-Bold>" if owned else "<System>", 11)
-        self.name.text_color = t["text"] if owned else t["sub"]
+        self.t_num.text = "#%03d" % app.number[label][game]
+        self.t_ok.hidden = not owned
+        self.t_title.text = game
+        self.t_title.font = ("<System-Bold>" if owned else "<System>", 11)
+        self.t_title.text_color = t["text"] if owned else t["sub"]
         if price:
-            self.price.text = ("✎ " if price.get("manual") else "") + eur_short(price["mid"])
+            self.t_price.text = ("✎ " if price.get("manual") else "") + eur_short(price["mid"])
         else:
-            self.price.text = "prix ?" if app.error_of(label, game) else "…"
-        self.stars.text = "★" * rar[2] if rar else ""
-        self.stars.text_color = rar[3] if rar else t["sub"]
-        self.show_cover()
+            self.t_price.text = "prix ?" if app.error_of(label, game) else "…"
+        self.t_stars.text = "★" * rar[2] if rar else ""
+        self.t_stars.text_color = rar[3] if rar else t["sub"]
+        self.t_show_cover()
 
-    def cover_path(self):
+    def t_cover_path(self):
         """(chemin de l'image, atténuer ?) ou (None, False) si pas encore téléchargée."""
-        app = self.app
-        owned = app.coll.is_owned(self.label, self.game)
-        url = app.cover_url(self.label, self.game)
+        app = self.t_app
+        owned = app.coll.is_owned(self.t_console, self.t_game)
+        url = app.cover_url(self.t_console, self.t_game)
         if not url:
             return None, False
         p = app.covers.path(url, grey=not owned)
@@ -3315,32 +3315,32 @@ class Tile(ui.View):
             return app.covers.path(url), True      # pas de version grise : couleur atténuée
         return None, False
 
-    def show_cover(self):
-        app, t = self.app, self.app.theme
-        owned = app.coll.is_owned(self.label, self.game)
-        path, dim = self.cover_path()
+    def t_show_cover(self):
+        app, t = self.t_app, self.t_app.theme
+        owned = app.coll.is_owned(self.t_console, self.t_game)
+        path, dim = self.t_cover_path()
         img = load_image(path) if path else None
         if img:
-            self.iv.image = img
-            self.iv.alpha = 1.0 if owned else (0.35 if dim else 0.55)
-            self.iv.hidden = False
-            self.ph.hidden = True
+            self.t_img.image = img
+            self.t_img.alpha = 1.0 if owned else (0.35 if dim else 0.55)
+            self.t_img.hidden = False
+            self.t_ph.hidden = True
             return
-        self.iv.image = None                     # rien en mémoire pour cette case
-        self.iv.hidden = True
-        self.ph.hidden = False
-        url = app.cover_url(self.label, self.game)
+        self.t_img.image = None                     # rien en mémoire pour cette case
+        self.t_img.hidden = True
+        self.t_ph.hidden = False
+        url = app.cover_url(self.t_console, self.t_game)
         color = app.covers.color(url, grey=not owned)
-        self.ph.background_color = color or t["placeholder"]
-        self.ph.alpha = 1.0 if owned or not color else 0.55
-        loading = app.loading == (self.label, self.game) or (url and not color)
-        self.ph_label.text = "" if color else ("…" if loading or not app.error_of(
-            self.label, self.game) else "?")
+        self.t_ph.background_color = color or t["placeholder"]
+        self.t_ph.alpha = 1.0 if owned or not color else 0.55
+        loading = app.loading == (self.t_console, self.t_game) or (url and not color)
+        self.t_ph_label.text = "" if color else ("…" if loading or not app.error_of(
+            self.t_console, self.t_game) else "?")
 
-    def release(self):
+    def t_release(self):
         """Case sortie de l'écran : on décharge son image et on la garde pour plus tard."""
-        self.iv.image = None
-        self.game = None
+        self.t_img.image = None
+        self.t_game = None
         self.hidden = True
 
 
@@ -3350,7 +3350,7 @@ class DetailScreen(Screen):
     def __init__(self, app, nav, label, game):
         super().__init__()
         self.app, self.nav, self.label, self.game = app, nav, label, game
-        self.title = "#%03d  %s" % (app.number[label][game], label)
+        self.screen_title = "#%03d  %s" % (app.number[label][game], label)
         self.background_color = app.theme["bg"]
         self.scroll = ui.ScrollView()
         self.scroll.always_bounce_vertical = True
@@ -3734,7 +3734,7 @@ def diagnostic(app):
 
 @guard_class
 class JournalScreen(Screen):
-    title = "Journal"
+    screen_title = "Journal"
 
     def __init__(self, app, nav):
         super().__init__()
