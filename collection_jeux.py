@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.20 (09/11/2026)"
+APP_VERSION = "3.21 (09/11/2026)"
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py"
 LOG_FILE = os.path.join(DOCS, "journal_collection.txt")        # journal de bord
 CRASH_FILE = os.path.join(DOCS, "journal_plantages.txt")      # plantages durs (faulthandler)
@@ -2362,7 +2362,7 @@ class FullCatalog:
             d = raw if isinstance(raw, dict) and isinstance(raw.get("rows"), list) else \
                 {"rows": [], "form": None, "done": False, "ts": 0}
             d["by"] = {r[0]: i for i, r in enumerate(d["rows"])}
-            d["bases"] = set(base_key(r[0]) for r in d["rows"])
+            d["bases"] = {base_key(r[0]): i for i, r in enumerate(d["rows"])}
             self.data[label] = d
         return d
 
@@ -2392,7 +2392,7 @@ class FullCatalog:
     def add_page(self, label, rows, form, first):
         d = self.get(label)
         if first:                             # 1re page (ou mise à jour mensuelle)
-            d["rows"], d["by"], d["bases"], d["pages"] = [], {}, set(), 0
+            d["rows"], d["by"], d["bases"], d["pages"] = [], {}, {}, 0
         d["pages"] = d.get("pages", 0) + 1
         added = 0
         sel = self.selection_keys(label)
@@ -2403,16 +2403,16 @@ class FullCatalog:
             base = base_key(title)
             if not base or base in sel:
                 continue                      # déjà dans la sélection
-            if base in d["bases"]:
-                i = next((j for j, x in enumerate(d["rows"]) if base_key(x[0]) == base), None)
-                if i is not None and "[" in d["rows"][i][0] and "[" not in title:
+            if base in d["bases"]:                # recherche directe (plus de boucle sur tout)
+                i = d["bases"][base]
+                if "[" in d["rows"][i][0] and "[" not in title:
                     old = d["rows"][i][0]     # on préfère l'édition normale à [Platinum]
                     d["rows"][i] = [title, r["url"], r["guide"].get("Disque seul"),
                                     r["guide"].get("Complet"), r["guide"].get("Neuf"), r["img"]]
                     d["by"].pop(old, None)
                     d["by"][title] = i
                 continue
-            d["bases"].add(base)
+            d["bases"][base] = len(d["rows"])
             d["by"][title] = len(d["rows"])
             d["rows"].append([title, r["url"], r["guide"].get("Disque seul"),
                               r["guide"].get("Complet"), r["guide"].get("Neuf"), r["img"]])
@@ -2894,7 +2894,8 @@ class App:
         time.sleep(0.8)
         while not self.closed:
             try:
-                self._price_step()
+                with autoreleasepool():     # libère les objets iOS à chaque étape
+                    self._price_step()
             except Exception:
                 log_exception("Erreur dans le chargement des prix")
                 time.sleep(5)
@@ -3591,7 +3592,8 @@ class ConsoleScreen(Screen):
         pool = list(GAMES_BY[self.label])
         if self.complete:
             pool += self.app.full.names(self.label)
-        pool += [g for g in sorted(owned) if g not in SEL_SET[self.label] and g not in pool]
+        seen = set(pool)
+        pool += [g for g in sorted(owned) if g not in seen]
         for g in pool:
             if f == "Obtenus" and g not in owned:
                 continue
@@ -3604,11 +3606,12 @@ class ConsoleScreen(Screen):
         return out
 
     def rebuild(self):
-        games = set(self.matching())
+        games_list = self.matching()
+        games = set(games_list)
         items = []
         if self.sort_index == 0:  # ordre du catalogue, avec les titres de section
             seen = set()
-            extra = [g for g in self.matching() if g not in SEL_SET[self.label]]
+            extra = [g for g in games_list if g not in SEL_SET[self.label]]
             sections = list(SECTIONS_BY[self.label])
             if extra:
                 sections.append(("Tous les autres jeux", extra))
@@ -3622,7 +3625,7 @@ class ConsoleScreen(Screen):
                     seen.add(g)
                     items.append(("g", g))
         else:
-            lst = [g for g in self.matching()]
+            lst = list(games_list)
             if self.sort_index == 1:
                 lst.sort(key=lambda g: -((self.app.price(self.label, g) or {}).get("mid") or -1))
             elif self.sort_index == 2:
