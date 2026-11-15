@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.31 (15/11/2026)"
+APP_VERSION = "3.32 (15/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -3300,7 +3300,11 @@ class App:
             self.wake.clear()
             return
         job = self.next_job()
-        self.keep_awake(bool(job) and self.remaining() >= 20)
+        if not job:
+            self.keep_awake(False)
+        elif time.time() - getattr(self, "_awake_check", 0) > 60:   # calcul coûteux : 1 fois/min
+            self._awake_check = time.time()
+            self.keep_awake(self.remaining() >= 20)
         if not job:
             self.loading = None
             self.set_status("Catalogue à jour : prix et jaquettes chargés")
