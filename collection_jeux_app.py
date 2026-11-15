@@ -91,7 +91,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.39 (15/11/2026)"
+APP_VERSION = "3.40 (15/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -3930,6 +3930,11 @@ class HomeScreen(Screen):
                                "#ff9f0a", "white", 13)
             sv.add_subview(warn)
             y += 40 + pad
+        sv.add_subview(make_button("🔍  Rechercher un jeu (toutes les consoles)",
+                                   (pad, y, w - 2 * pad, 40),
+                                   lambda s: self.nav.push(SearchScreen(self.app, self.nav)),
+                                   t["field"], t["sub"], 14))
+        y += 40 + 12
         card = ui.View(frame=(pad, y, w - 2 * pad, 248), background_color=t["card"])
         card.corner_radius = 14
         card.add_subview(gradient_view((0, 0, w - 2 * pad, 100), t["accent"], 14, 0.4))
@@ -5141,6 +5146,150 @@ def scan_lookup(app, nav, code):
             hud("Ajouté aux souhaits", "success", 1.0)
         nav.push(DetailScreen(app, nav, label, game))
     on_main(act)
+
+
+# ====================================================================== recherche globale
+@guard_class
+class SearchScreen(Screen):
+    screen_title = "Rechercher"
+    MAX = 80
+
+    def __init__(self, app, nav):
+        super().__init__()
+        self.app, self.nav = app, nav
+        t = app.theme
+        self.background_color = t["bg"]
+        self.query = ""
+        self.everything = False
+        self.to_load = []
+        self.field = ui.TextField()
+        self.field.placeholder = "Nom du jeu (ex. : zelda, mario kart, gta)"
+        self.field.clear_button_mode = "while_editing"
+        self.field.autocorrection_type = False
+        self.field.spellchecking_type = False
+        self.field.background_color = t["field"]
+        self.field.text_color = t["text"]
+        self.field.bordered = False
+        self.field.corner_radius = 9
+        self.field.delegate = self
+        self.add_subview(self.field)
+        self.scope = ui.SegmentedControl()
+        self.scope.segments = ["Sélections + ma collection", "Tout (catalogues)"]
+        self.scope.selected_index = 0
+        self.scope.action = self.scope_changed
+        self.add_subview(self.scope)
+        self.info = make_label("", (0, 0, 10, 10), 12, False, t["sub"])
+        self.add_subview(self.info)
+        self.scroll = ui.ScrollView()
+        self.scroll.indicator_style = t["indicator"]
+        self.scroll.always_bounce_vertical = True
+        self.add_subview(self.scroll)
+
+    def on_show(self):
+        try:
+            self.field.begin_editing()
+        except Exception:
+            pass
+
+    def textfield_did_change(self, tf):
+        self.query = tf.text or ""
+        self.later(self.build, 0.3)
+
+    def textfield_should_return(self, tf):
+        tf.end_editing()
+        return True
+
+    def scope_changed(self, sender):
+        self.everything = sender.selected_index == 1
+        if self.everything:
+            self.to_load = [l for l in LABELS if l not in self.app.full.data
+                            and os.path.exists(self.app.full.path(l))]
+        self.build()
+
+    def idle(self):
+        """Catalogues complets lus un par un (pas de blocage de l'écran)."""
+        if self.to_load:
+            self.app.full.get(self.to_load.pop(0))
+            if not self.to_load:
+                self.build()
+            else:
+                self.info.text = "Lecture des catalogues... (%d restants)" % len(self.to_load)
+
+    def layout(self):
+        w, h = self.width, self.height
+        self.field.frame = (10, 8, w - 20, 36)
+        self.scope.frame = (10, 52, w - 20, 30)
+        self.info.frame = (14, 88, w - 28, 16)
+        self.scroll.frame = (0, 108, w, max(0, h - 108))
+        self.build()
+
+    def results(self):
+        q = normalize(self.query.strip())
+        if len(q) < 2:
+            return [], 0
+        out, n = [], 0
+        for label in LABELS:
+            pool = list(GAMES_BY[label])
+            seen = set(pool)
+            extra = sorted(self.app.coll.owned[label]) + self.app.coll.wished_games(label)
+            if self.everything and label in self.app.full.data:
+                extra += self.app.full.names(label)
+            for g in extra:
+                if g not in seen:
+                    seen.add(g)
+                    pool.append(g)
+            for g in pool:
+                if q in normalize(g):
+                    n += 1
+                    if len(out) < self.MAX:
+                        out.append((label, g))
+        # les jeux possédés, puis ceux qui commencent par la recherche, d'abord
+        out.sort(key=lambda x: (not self.app.coll.is_owned(*x),
+                                not normalize(x[1]).startswith(q), x[1]))
+        return out, n
+
+    def build(self):
+        app, t, sv = self.app, self.app.theme, self.scroll
+        for v in list(sv.subviews):
+            sv.remove_subview(v)
+        w = self.width
+        if w < 50:
+            return
+        res, n = self.results()
+        if len(normalize(self.query.strip())) < 2:
+            self.info.text = "Tape au moins 2 lettres"
+        else:
+            self.info.text = ("%d résultat%s" % (n, "s" if n > 1 else "")) + \
+                (" (les %d premiers affichés)" % self.MAX if n > self.MAX else "")
+        if self.to_load:
+            self.info.text = "Lecture des catalogues... (%d restants)" % len(self.to_load)
+        pad, cw = 10, w - 20
+        y = 4
+        for label, g in res:
+            owned = app.coll.is_owned(label, g)
+            row = ui.View(frame=(pad, y, cw, 48), background_color=t["card"])
+            row.corner_radius = 10
+            bar = ui.View(frame=(0, 8, 4, 32), background_color=family_color(label, t["accent"]))
+            bar.corner_radius = 2
+            row.add_subview(bar)
+            row.add_subview(make_label(g, (14, 6, cw - 120, 18), 14, owned, t["text"]))
+            sub = FULL_NAME[label]
+            if app.coll.is_wished(label, g) and not owned:
+                sub += "  •  ♥"
+            row.add_subview(make_label(sub, (14, 26, cw - 120, 14), 11, False, t["sub"]))
+            p = app.price(label, g)
+            row.add_subview(make_label(eur_short(p["mid"]) if p else "", (cw - 104, 6, 70, 18),
+                                       13, True, t["text"], "right"))
+            if owned:
+                ok, _ = make_pill("✓", (cw - 30, 12, 22, 22), 12, t["owned"])
+                row.add_subview(ok)
+            b = ui.Button(frame=(0, 0, cw, 48))
+            b.action = (lambda s, l=label, g=g:
+                        self.nav.push(DetailScreen(self.app, self.nav, l, g)))
+            row.add_subview(b)
+            sv.add_subview(row)
+            y += 54
+        sv.content_size = (w, y + 10)
 
 
 # ====================================================================== liste de souhaits
