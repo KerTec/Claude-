@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.35 (15/11/2026)"
+APP_VERSION = "3.36 (15/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -3815,7 +3815,11 @@ class HomeScreen(Screen):
         card.add_subview(make_button("Rafraîchir les prix", (28 + (cw - 44) / 2, 92,
                                                               (cw - 44) / 2, 30),
                                      lambda s: self.refresh_all(), t["field"], t["accent"], 13))
-        card.add_subview(make_button("Journal / signaler un problème", (16, 130, cw - 32, 30),
+        card.add_subview(make_button("📊 Statistiques", (16, 130, (cw - 44) / 2, 30),
+                                     lambda s: self.nav.push(StatsScreen(self.app, self.nav)),
+                                     t["field"], t["accent"], 13))
+        card.add_subview(make_button("Journal / problème", (28 + (cw - 44) / 2, 130,
+                                                             (cw - 44) / 2, 30),
                                      lambda s: self.open_journal(), t["field"], t["sub"], 13))
         sv.add_subview(card)
         y += 172 + pad
@@ -4517,6 +4521,181 @@ class Tile(ui.View):
         self.t_img.image = None
         self.t_game = None
         self.hidden = True
+
+
+# ====================================================================== statistiques
+def collection_stats(app):
+    """Chiffres de la collection : valeur, plus-value, top, rareté, consoles."""
+    games, by_console, by_rarity = [], [], collections.Counter()
+    paid = gain = 0.0
+    for label in LABELS:
+        value, n = 0.0, 0
+        for g in app.coll.owned_games(label):
+            n += 1
+            p = app.price(label, g)
+            rar = app.rarity(label, g)
+            by_rarity[rar[1] if rar else "?"] += 1
+            if not p:
+                continue
+            value += p["mid"]
+            games.append((p["mid"], label, g, rar))
+            d = app.delta(label, g)
+            if d:
+                paid += d[0]
+                gain += d[1]
+        if n:
+            by_console.append((value, label, n))
+    games.sort(key=lambda x: -x[0])
+    by_console.sort(key=lambda x: -x[0])
+    return {"games": games, "consoles": by_console, "rarity": by_rarity,
+            "value": sum(x[0] for x in games), "paid": paid, "gain": gain,
+            "count": sum(x[2] for x in by_console)}
+
+
+@guard_class
+class StatsScreen(Screen):
+    screen_title = "Statistiques"
+
+    def __init__(self, app, nav):
+        super().__init__()
+        self.app, self.nav = app, nav
+        self.background_color = app.theme["bg"]
+        self.scroll = ui.ScrollView()
+        self.scroll.indicator_style = app.theme["indicator"]
+        self.scroll.always_bounce_vertical = True
+        self.add_subview(self.scroll)
+
+    def on_data(self, label, game):
+        if not self.hidden:
+            self.later(self.build, 2.0)
+
+    def layout(self):
+        self.scroll.frame = (0, 0, self.width, self.height)
+        self.build()
+
+    def section(self, title, y):
+        t = self.app.theme
+        bar = ui.View(frame=(16, y + 3, 4, 16), background_color=t["accent"])
+        bar.corner_radius = 2
+        self.scroll.add_subview(bar)
+        self.scroll.add_subview(make_label(title.upper(), (28, y, self.width, 22), 13, True,
+                                           t["sub"]))
+        return y + 30
+
+    def build(self):
+        app, t, sv = self.app, self.app.theme, self.scroll
+        for v in list(sv.subviews):
+            sv.remove_subview(v)
+        w = self.width
+        if w < 50:
+            return
+        st = collection_stats(app)
+        pad, cw = 16, w - 32
+        y = pad
+        # --- valeur et plus-value
+        card = ui.View(frame=(pad, y, cw, 120), background_color=t["card"])
+        card.corner_radius = 16
+        card.add_subview(gradient_view((0, 0, cw, 120), t["accent"], 16, 0.4, 0.0))
+        card.add_subview(make_label("Valeur de ma collection", (16, 12, cw, 18), 13, False,
+                                    t["sub"]))
+        card.add_subview(make_label(eur(st["value"]), (16, 32, cw - 32, 38), 32, True,
+                                    t["text"]))
+        card.add_subview(make_label("%s  •  moyenne %s / jeu" % (
+            ("%d jeu%s" % (st["count"], "x" if st["count"] > 1 else "")),
+            eur_short(st["value"] / len(st["games"])) if st["games"] else "—"),
+            (16, 72, cw - 32, 18), 13, False, t["sub"]))
+        if st["paid"]:
+            txt, col = delta_text((st["paid"], st["gain"]))
+            pct = 100.0 * st["gain"] / st["paid"] if st["paid"] else 0
+            card.add_subview(make_label("%s  (%+.1f %%) depuis l'ajout" % (txt, pct),
+                                        (16, 92, cw - 32, 20), 14, True, col))
+        sv.add_subview(card)
+        y += 120 + 20
+
+        # --- les plus chers
+        if st["games"]:
+            y = self.section("Mes jeux les plus chers", y)
+            top = st["games"][:10]
+            box = ui.View(frame=(pad, y, cw, 10), background_color=t["card"])
+            box.corner_radius = 14
+            by = 6
+            for i, (value, label, g, rar) in enumerate(top):
+                col = rar[3] if rar else t["sub"]
+                medal = {0: "🥇", 1: "🥈", 2: "🥉"}.get(i, "%d." % (i + 1))
+                box.add_subview(make_label(medal, (10, by, 30, 36), 15, True, t["sub"],
+                                           "center"))
+                box.add_subview(make_label(g, (44, by + 2, cw - 150, 18), 14, True, t["text"]))
+                box.add_subview(make_label("%s  %s" % (label, "★" * rar[2] if rar else ""),
+                                           (44, by + 20, cw - 150, 14), 11, False, col))
+                box.add_subview(make_label(eur(value), (cw - 110, by, 98, 36), 15, True,
+                                           t["text"], "right"))
+                b = ui.Button(frame=(0, by, cw, 38))
+                b.action = (lambda s, l=label, g=g:
+                            self.nav.push(DetailScreen(self.app, self.nav, l, g)))
+                box.add_subview(b)
+                by += 40
+                if i < len(top) - 1:
+                    box.add_subview(ui.View(frame=(44, by - 2, cw - 56, 0.5),
+                                            background_color=t["line"]))
+            box.frame = (pad, y, cw, by + 6)
+            sv.add_subview(box)
+            y += by + 26
+
+        # --- rareté
+        if st["count"]:
+            y = self.section("Rareté", y)
+            box = ui.View(frame=(pad, y, cw, 10), background_color=t["card"])
+            box.corner_radius = 14
+            by = 12
+            most = max(st["rarity"].values()) or 1
+            for _, name, n_stars, col in RARITY:
+                n = st["rarity"].get(name, 0)
+                box.add_subview(make_label("%s %s" % ("★" * n_stars, name),
+                                           (14, by, 150, 18), 12, True, col))
+                bw = (cw - 220) * n / float(most)
+                bar = ui.View(frame=(165, by + 3, max(4, bw), 12), background_color=col)
+                bar.corner_radius = 6
+                bar.alpha = 1.0 if n else 0.25
+                box.add_subview(bar)
+                box.add_subview(make_label(str(n), (cw - 50, by, 36, 18), 13, True,
+                                           t["text"], "right"))
+                by += 28
+            box.frame = (pad, y, cw, by + 4)
+            sv.add_subview(box)
+            y += by + 24
+
+        # --- par console
+        if st["consoles"]:
+            y = self.section("Valeur par console", y)
+            box = ui.View(frame=(pad, y, cw, 10), background_color=t["card"])
+            box.corner_radius = 14
+            by = 12
+            most = max(v for v, _, _ in st["consoles"]) or 1
+            for value, label, n in st["consoles"]:
+                col = family_color(label, t["accent"])
+                box.add_subview(make_label(FULL_NAME[label], (14, by, cw - 130, 18), 13, True,
+                                           t["text"]))
+                box.add_subview(make_label("%s  •  %s" % (eur_short(value),
+                                                          ("%d jeu%s" % (n, "x" if n > 1 else ""))),
+                                           (cw - 160, by, 146, 18), 12, False, t["sub"],
+                                           "right"))
+                track = ui.View(frame=(14, by + 22, cw - 28, 8), background_color=t["field"])
+                track.corner_radius = 4
+                fill = ui.View(frame=(0, 0, max(8, (cw - 28) * value / most), 8),
+                               background_color=col)
+                fill.corner_radius = 4
+                track.add_subview(fill)
+                box.add_subview(track)
+                by += 42
+            box.frame = (pad, y, cw, by + 2)
+            sv.add_subview(box)
+            y += by + 24
+        if not st["count"]:
+            sv.add_subview(make_label("Ajoute des jeux à ta collection pour voir tes "
+                                      "statistiques.", (pad, y, cw, 40), 14, False, t["sub"],
+                                      "center", 2))
+            y += 50
+        sv.content_size = (w, y)
 
 
 # ====================================================================== fiche d'un jeu
