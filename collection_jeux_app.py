@@ -68,6 +68,7 @@ DATA_FILE = os.path.join(DOCS, "collection_jeux.json")
 LEGACY_FILE = os.path.join(DOCS, "collection_ps2.json")
 CACHE_FILE = os.path.join(DOCS, "prix_cache.json")
 CSV_FILE = os.path.join(DOCS, "valeur_collection.csv")
+HISTORY_FILE = os.path.join(DOCS, "valeur_historique.json")  # valeur de la collection par jour
 DEBUG_FILE = os.path.join(DOCS, "debug_pricecharting.html")
 TOKEN_FILE = os.path.join(DOCS, "pricecharting_token.txt")
 COVER_DIR = os.path.join(DOCS, "jaquettes")
@@ -90,7 +91,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.38 (15/11/2026)"
+APP_VERSION = "3.39 (15/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -2867,6 +2868,7 @@ class App:
         self.first_beat = 0.0     # premier passage de l'interface
         self.last_prices_save = time.time()
         self.added_dirty = False  # prix d'ajout figés à enregistrer
+        self.history = ValueHistory()
         self.bg_paused = False    # chargement en pause car l'app est en arrière-plan
         self.awake = False        # écran maintenu allumé pendant un gros chargement
         self.safe_mode = False    # démarrage sans chargement (après plantages répétés)
@@ -3847,6 +3849,7 @@ class HomeScreen(Screen):
         total = sum(len(GAMES_BY[l]) for l in LABELS)
         value = sum(self.app.console_value(l)[0] for l in LABELS)
         count_lbl.text = "%d / %d jeux" % (owned, total)
+        self.app.history.record(value, self.app.coll.total())
         if getattr(self, "wish_btn", None):
             self.wish_btn.title = self.wish_title()
         value_lbl.text = "Valeur estimée : %s" % eur(value)
@@ -4669,6 +4672,79 @@ class Tile(ui.View):
         self.hidden = True
 
 
+# ====================================================================== historique de valeur
+class ValueHistory:
+    """Valeur de la collection jour par jour (pour la courbe des statistiques)."""
+
+    def __init__(self):
+        raw = read_json(HISTORY_FILE)
+        self.days = {k: v for k, v in (raw or {}).items()
+                     if isinstance(k, str) and isinstance(v, (int, float))} \
+            if isinstance(raw, dict) else {}
+        self.last_write = 0.0
+
+    def record(self, value, count):
+        """Valeur du jour (écrite au plus toutes les 10 min ; jamais une collection vide)."""
+        if count <= 0 or value <= 0:
+            return
+        day = time.strftime("%Y-%m-%d")
+        old = self.days.get(day)
+        self.days[day] = round(value, 2)
+        if old is None or time.time() - self.last_write > 600:
+            self.last_write = time.time()
+            for k in sorted(self.days)[:-400]:
+                self.days.pop(k, None)
+            try:
+                write_json(HISTORY_FILE, self.days)
+            except OSError:
+                pass
+
+    def series(self):
+        return sorted(self.days.items())
+
+
+def chart_image(points, w, h, color, text_color):
+    """Courbe (dates, valeurs) dessinée une fois en image."""
+    vals = [v for _, v in points]
+    lo, hi = min(vals), max(vals)
+    if hi - lo < 1:
+        lo, hi = lo - 1, hi + 1
+    pad = 6
+    n = len(points)
+
+    def xy(i, v):
+        x = pad + (w - 2 * pad) * (i / float(n - 1) if n > 1 else 0.5)
+        y = pad + (h - 2 * pad) * (1 - (v - lo) / (hi - lo))
+        return x, y
+
+    try:
+        c = ui.parse_color(color)
+        with ui.ImageContext(w, h) as ctx:
+            ui.set_color((c[0], c[1], c[2], 0.15))
+            area = ui.Path()
+            x0, _ = xy(0, vals[0])
+            area.move_to(x0, h)
+            for i, v in enumerate(vals):
+                area.line_to(*xy(i, v))
+            area.line_to(xy(n - 1, vals[-1])[0], h)
+            area.close()
+            area.fill()
+            ui.set_color(color)
+            line = ui.Path()
+            line.line_width = 2.5
+            line.line_join_style = ui.LINE_JOIN_ROUND
+            line.move_to(*xy(0, vals[0]))
+            for i, v in enumerate(vals[1:], 1):
+                line.line_to(*xy(i, v))
+            line.stroke()
+            x, y = xy(n - 1, vals[-1])
+            ui.Path.oval(x - 4, y - 4, 8, 8).fill()
+            return ctx.get_image()
+    except Exception:
+        log_exception("Courbe de valeur")
+        return None
+
+
 # ====================================================================== statistiques
 def collection_stats(app):
     """Chiffres de la collection : valeur, plus-value, top, rareté, consoles."""
@@ -4757,6 +4833,35 @@ class StatsScreen(Screen):
                                         (16, 92, cw - 32, 20), 14, True, col))
         sv.add_subview(card)
         y += 120 + 20
+
+        # --- évolution
+        app.history.record(st["value"], st["count"])
+        pts = app.history.series()[-90:]
+        y = self.section("Évolution de la valeur", y)
+        box = ui.View(frame=(pad, y, cw, 180), background_color=t["card"])
+        box.corner_radius = 14
+        if len(pts) >= 2:
+            img = chart_image(pts, cw - 24, 120, t["accent"], t["sub"])
+            if img:
+                iv = ui.ImageView(frame=(12, 12, cw - 24, 120))
+                iv.image = img
+                box.add_subview(iv)
+            first, last = pts[0], pts[-1]
+            box.add_subview(make_label(time.strftime("%d/%m", time.strptime(first[0], "%Y-%m-%d")),
+                                       (12, 138, 80, 16), 11, False, t["sub"]))
+            box.add_subview(make_label("aujourd'hui", (cw - 92, 138, 80, 16), 11, False,
+                                       t["sub"], "right"))
+            txt, col = delta_text((first[1], last[1] - first[1]))
+            box.add_subview(make_label("%s depuis le %s" % (
+                txt or "=", time.strftime("%d/%m/%Y", time.strptime(first[0], "%Y-%m-%d"))),
+                (12, 156, cw - 24, 18), 13, True, col, "center"))
+        else:
+            box.add_subview(make_label("La courbe apparaîtra dès demain : la valeur de ta "
+                                       "collection est notée chaque jour.",
+                                       (16, 60, cw - 32, 60), 13, False, t["sub"], "center",
+                                       3))
+        sv.add_subview(box)
+        y += 180 + 20
 
         # --- les plus chers
         if st["games"]:
