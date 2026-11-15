@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.31 (15/11/2026)"
+APP_VERSION = "3.32 (15/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -2590,22 +2590,6 @@ def console_icon_url(label):
     return RA_ICON_BASE + quote(name) + ".png" if name else None
 
 
-def pick_console_photo(rows):
-    """Photo de la console : la ligne « ... Console / System » la plus simple
-    (sans manette, sans édition limitée si possible)."""
-    best = None
-    for r in rows:
-        t = r["title"]
-        if not r.get("img") or not re.search(r"\b(console|system)\b", t, re.I):
-            continue
-        if re.search(r"controller|manette|pad\b|adapter|cable|memory", t, re.I):
-            continue
-        score = (("[" in t) + ("bundle" in t.lower()) + ("edition" in t.lower()), len(t))
-        if best is None or score < best[0]:
-            best = (score, r["img"])
-    return best[1] if best else None
-
-
 # ====================================================================== catalogue complet
 NON_GAME = {"console", "system", "controller", "memory", "adapter", "cable", "headset",
             "strategy", "guide", "manual", "kiosk", "camera", "remote", "charger", "steering",
@@ -3084,41 +3068,6 @@ class App:
         r = self.full.row(label, game)
         return r[5] if r else None
 
-    def console_photo(self, label):
-        rec = (self.prices.data.get("_console_img") or {}).get(label)
-        return rec.get("url") if isinstance(rec, dict) else None
-
-    def set_console_photo(self, label, url):
-        with self.prices.lock:
-            self.prices.data.setdefault("_console_img", {})[label] = {"url": url,
-                                                                      "ts": time.time()}
-        if url:
-            self.covers.want(url)
-
-    def photo_needed(self, label):
-        rec = (self.prices.data.get("_console_img") or {}).get(label)
-        if not isinstance(rec, dict):
-            return True
-        return not rec.get("url") and time.time() - rec.get("ts", 0) > 7 * 24 * 3600
-
-    def photo_step(self, label):
-        """Photo d'une console (1re page de sa liste PriceCharting)."""
-        self.set_status("Photo de la console %s..." % FULL_NAME[label])
-        try:
-            rows, _ = fetch_console_list(label)
-        except Exception as ex:
-            log("Photo de la console %s : %s" % (label, ex), "AVERT")
-            rows = []
-        url = pick_console_photo(rows)
-        if not url:                          # pas de photo en PAL : version US
-            try:
-                url = pick_console_photo(fetch_console_list(label, us=True)[0])
-            except Exception:
-                url = None
-        self.set_console_photo(label, url)
-        self.save_prices_soon()
-        self.notify()
-
     def num(self, label, game):
         n = self.number[label].get(game)
         if n is None:
@@ -3271,8 +3220,6 @@ class App:
             self.set_status("Chargement rapide %s : page %d/%d (%d jeux trouvés)"
                             % (label, page_no, BULK_PAGES, found))
             rows, form = fetch_console_list(label, form)
-            if page_no == 1 and self.photo_needed(label):
-                self.set_console_photo(label, pick_console_photo(rows))
             for row in rows:
                 g = wanted.get(exact_key(row["title"]))
                 if g is None or not any(row["guide"].values()):
@@ -3353,7 +3300,11 @@ class App:
             self.wake.clear()
             return
         job = self.next_job()
-        self.keep_awake(bool(job) and self.remaining() >= 20)
+        if not job:
+            self.keep_awake(False)
+        elif time.time() - getattr(self, "_awake_check", 0) > 60:   # calcul coûteux : 1 fois/min
+            self._awake_check = time.time()
+            self.keep_awake(self.remaining() >= 20)
         if not job:
             self.loading = None
             self.set_status("Catalogue à jour : prix et jaquettes chargés")
@@ -3369,9 +3320,6 @@ class App:
             return
         if full == "complet":
             self.full_step(label)
-            return
-        if full == "photo":
-            self.photo_step(label)
             return
         key = key_of(label, game)
         self.loading = (label, game)
