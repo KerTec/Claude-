@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.32 (15/11/2026)"
+APP_VERSION = "3.33 (15/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -3453,6 +3453,100 @@ class Screen(ui.View):
 
 
 # ====================================================================== navigation
+_GRAD_CACHE = {}
+
+
+def gradient_image(color, w, h, radius=0, top=0.5, bottom=0.0):
+    """Dégradé vertical (couleur -> transparent) aux coins arrondis, dessiné une seule
+    fois (petite image en cache, échelle 1 : un dégradé n'a pas besoin de détails)."""
+    key = (str(color), int(w), int(h), radius, top, bottom)
+    if key in _GRAD_CACHE:
+        return _GRAD_CACHE[key]
+    img = None
+    try:
+        c = ui.parse_color(color)
+        steps = max(2, int(h / 3))
+        with ui.ImageContext(w, h, 1) as ctx:
+            if radius:
+                ui.Path.rounded_rect(0, 0, w, h, radius).add_clip()
+            for i in range(steps):
+                a = top + (bottom - top) * i / float(steps - 1)
+                ui.set_color((c[0], c[1], c[2], a))
+                ui.fill_rect(0, h * i / float(steps), w, h / float(steps) + 1)
+            img = ctx.get_image()
+    except Exception:
+        img = None
+    if len(_GRAD_CACHE) > 40:
+        _GRAD_CACHE.clear()
+    _GRAD_CACHE[key] = img
+    return img
+
+
+def vivid(color):
+    """Couleur éclaircie (le halo d'une jaquette sombre doit rester visible)."""
+    try:
+        import colorsys
+        c = ui.parse_color(color)
+        h, s, v = colorsys.rgb_to_hsv(c[0], c[1], c[2])
+        r, g, b = colorsys.hsv_to_rgb(h, s, max(v, 0.75))
+        return (r, g, b, 1.0)
+    except Exception:
+        return color
+
+
+def gradient_view(frame, color, radius=0, top=0.5, bottom=0.0):
+    img = gradient_image(color, frame[2], frame[3], radius, top, bottom)
+    if img is None:                      # secours : teinte unie légère
+        v = ui.View(frame=frame)
+        try:
+            c = ui.parse_color(color)
+            v.background_color = (c[0], c[1], c[2], top * 0.4)
+        except Exception:
+            pass
+        v.corner_radius = radius
+    else:
+        v = ui.ImageView(frame=frame)
+        v.content_mode = ui.CONTENT_SCALE_TO_FILL
+        v.image = img
+    v.touch_enabled = False
+    return v
+
+
+def soft_shadow(view, w, h, radius, opacity=0.16):
+    """Ombre douce sous une vue. Le contour de l'ombre est donné à iOS : elle ne coûte
+    rien pendant le défilement."""
+    try:
+        from objc_util import ObjCClass, CGRect, CGPoint, CGSize
+        layer = view.objc_instance.layer()
+        layer.setShadowOpacity_(opacity)
+        layer.setShadowRadius_(4)
+        layer.setShadowOffset_(CGSize(0, 2))
+        path = ObjCClass("UIBezierPath").bezierPathWithRoundedRect_cornerRadius_(
+            CGRect(CGPoint(0, 0), CGSize(w, h)), radius)
+        layer.setShadowPath_(path.CGPath())
+    except Exception:
+        pass
+
+
+def animate(fn, duration=0.2, completion=None):
+    """Animation douce ; sans effet (mais appliquée) si elle n'est pas possible."""
+    try:
+        ui.animate(fn, duration, completion=completion)
+    except Exception:
+        fn()
+        if completion:
+            completion()
+
+
+def pop_effect(view):
+    """Petit « rebond » (jeu coché)."""
+    try:
+        view.transform = ui.Transform.scale(1.6, 1.6)
+        animate(lambda: setattr(view, "transform", ui.Transform()), 0.25)
+    except Exception:
+        pass
+
+
 @guard_class
 class AppView(ui.View):
     """Fenêtre principale : barre du haut (retour + titre) et pile d'écrans."""
@@ -3491,6 +3585,9 @@ class AppView(ui.View):
         self.layout()
         screen.on_show()
         self._update_bar()
+        if len(self.stack) > 1:
+            screen.alpha = 0.0
+            animate(lambda: setattr(screen, "alpha", 1.0), 0.18)
 
     def pop(self):
         if len(self.stack) <= 1:
@@ -3639,7 +3736,7 @@ class HomeScreen(Screen):
             got, pct, text = self.card_texts(label)
             cnt.text = "%d / %d" % (got, len(GAMES_BY[label]))
             cnt.text_color = t["owned"] if got else t["sub"]
-            fill.frame = (0, 0, max(6, track_w * pct), 6)
+            fill.frame = (0, 0, max(8, track_w * pct), 8)
             fill.hidden = not got
             sub.text = text
 
@@ -3702,6 +3799,7 @@ class HomeScreen(Screen):
             y += 40 + pad
         card = ui.View(frame=(pad, y, w - 2 * pad, 172), background_color=t["card"])
         card.corner_radius = 14
+        card.add_subview(gradient_view((0, 0, w - 2 * pad, 100), t["accent"], 14, 0.4))
         card.add_subview(make_label("Toutes consoles", (16, 12, w, 18), 13, False, t["sub"]))
         count_lbl = make_label("%d / %d jeux" % (owned, total), (16, 32, w, 30), 26, True,
                                t["text"])
@@ -3756,11 +3854,8 @@ class HomeScreen(Screen):
         x, y, w, h = frame
         card = ui.View(frame=frame, background_color=t["card"])
         card.corner_radius = 16
-        stripe = ui.View(frame=(18, 0, w - 36, 4), background_color=color)
-        stripe.corner_radius = 2
-        card.add_subview(stripe)
-        box = ui.View(frame=(8, 12, w - 16, 112), background_color=t["field"])
-        box.corner_radius = 12
+        card.add_subview(gradient_view((0, 0, w, 140), color, 16, 0.5))
+        box = ui.View(frame=(8, 12, w - 16, 112))
         ph = make_label(label, (0, 30, w - 16, 52), 28, True, color, "center")
         box.add_subview(ph)
         iv = ui.ImageView(frame=(10, 8, w - 36, 96))
@@ -3774,10 +3869,10 @@ class HomeScreen(Screen):
         cnt = make_label("%d / %d" % (got, len(GAMES_BY[label])), (8, 152, w - 16, 18), 13,
                          True, t["owned"] if got else t["sub"], "center")
         card.add_subview(cnt)
-        track = ui.View(frame=(16, 176, w - 32, 6), background_color=t["field"])
-        track.corner_radius = 3
-        fill = ui.View(frame=(0, 0, max(6, (w - 32) * pct), 6), background_color=color)
-        fill.corner_radius = 3
+        track = ui.View(frame=(16, 175, w - 32, 8), background_color=t["field"])
+        track.corner_radius = 4
+        fill = ui.View(frame=(0, 0, max(8, (w - 32) * pct), 8), background_color=color)
+        fill.corner_radius = 4
         fill.hidden = not got
         track.add_subview(fill)
         card.add_subview(track)
@@ -4201,6 +4296,12 @@ class ConsoleScreen(Screen):
             hud(("✓ " if now else "✗ ") + game, "success", 0.5)
             if self.filter_index:
                 self.rebuild()
+                return
+            self.redraw_game(game)
+            if now:
+                for v in list(self.live.values()):
+                    if isinstance(v, Tile) and v.t_game == game:
+                        pop_effect(v.t_ok_box)
             return
         self.nav.push(DetailScreen(self.app, self.nav, self.label, game))
 
@@ -4248,7 +4349,11 @@ class Tile(ui.View):
                                                radius=6)
         self.t_num_box.border_width = 1
         self.t_num_box.border_color = (1, 1, 1, 0.45)
-        self.t_ok_box, self.t_ok = make_pill("✓", (0, 8, 24, 24), 14, t["owned"])
+        self.t_ok_box, self.t_ok = make_pill("✓", (0, 8, 26, 26), 15, t["owned"])
+        self.t_ok_box.border_width = 2
+        self.t_ok_box.border_color = "white"
+        self.t_rar = ui.View()                     # liseré couleur de la rareté
+        self.t_rar.corner_radius = 1.5
         self.t_title = make_label("", (0, 0, 10, 10), 11, False, t["text"], "center", 2)
         self.t_price = make_label("", (0, 0, 10, 10), 11, True, t["text"])
         self.t_stars = make_label("", (0, 0, 10, 10), 10, False, t["sub"], "right")
@@ -4256,7 +4361,7 @@ class Tile(ui.View):
         self.t_btn = ui.Button()
         self.t_btn.action = lambda s: self.t_game and self.t_on_tap(self.t_game)
         for v in (self.t_ph, self.t_img, self.t_num_box, self.t_ok_box, self.t_title, self.t_price,
-                  self.t_stars, self.t_delta,
+                  self.t_stars, self.t_delta, self.t_rar,
                   self.t_btn):
             self.add_subview(v)
 
@@ -4264,11 +4369,13 @@ class Tile(ui.View):
         cover_h = h - 52
         self.t_ph.frame = self.t_img.frame = (5, 5, w - 10, cover_h - 5)
         self.t_ph_label.frame = (0, (cover_h - 5) / 2 - 20, w - 10, 40)
-        self.t_ok_box.frame = (w - 32, 8, 24, 24)
+        self.t_ok_box.frame = (w - 34, 8, 26, 26)
+        self.t_rar.frame = (16, h - 6, w - 32, 3)
+        soft_shadow(self, w, h, self.corner_radius)
         self.t_title.frame = (5, cover_h + 2, w - 10, 30)
-        self.t_price.frame = (6, h - 19, w * 0.36, 15)
-        self.t_delta.frame = (w * 0.28, h - 19, w * 0.46, 15)
-        self.t_stars.frame = (w * 0.7 - 6, h - 19, w * 0.3, 15)
+        self.t_price.frame = (6, h - 22, w * 0.36, 15)
+        self.t_delta.frame = (w * 0.28, h - 22, w * 0.46, 15)
+        self.t_stars.frame = (w * 0.7 - 6, h - 22, w * 0.3, 15)
         self.t_btn.frame = (0, 0, w, h)
         self.t_size = (w, h)
 
@@ -4307,6 +4414,8 @@ class Tile(ui.View):
         sv(self.t_delta, "text_color", dcol)
         sv(self.t_stars, "text", "★" * rar[2] if rar else "")
         sv(self.t_stars, "text_color", rar[3] if rar else t["sub"])
+        sv(self.t_rar, "hidden", not rar)
+        sv(self.t_rar, "background_color", rar[3] if rar else None)
         self.t_show_cover()
 
     def t_cover_path(self):
@@ -4404,9 +4513,11 @@ class DetailScreen(Screen):
         rar = app.rarity(label, game)
         e = app.prices.get(key_of(label, game)) or {}
 
-        # --- jaquette
+        # --- jaquette, sur un halo de sa couleur
         ch = min(300, w * 0.75)
         url = app.cover_url(label, game)
+        glow = vivid((app.covers.color(url) if url else None) or (rar[3] if rar else t["accent"]))
+        sv.add_subview(gradient_view((0, 0, w, ch + 90), glow, 0, 0.55))
         img = load_image(app.covers.local(url)) if url else None
         if img:
             iv = ui.ImageView(frame=(pad, y, w - 2 * pad, ch))
@@ -4489,17 +4600,22 @@ class DetailScreen(Screen):
                             plural(est["n"], "vente")),
                         (14, cy, cw - 28, 16), 11, False, t["sub"]))
                     cy += 18
-                cy += 6
+                card.add_subview(ui.View(frame=(14, cy + 2, cw - 28, 0.5),
+                                         background_color=t["line"]))
+                cy += 8
             d = app.delta(label, game)
             if d:
-                txt, col = delta_text(d)
+                txt, col = delta_text(d, short=True)
+                if txt == "=":
+                    txt = "= stable"
                 rec = app.coll.added.get(key_of(label, game)) or {}
                 card.add_subview(make_label("Ajouté le %s à %s" % (
                     time.strftime("%d/%m/%Y", time.localtime(rec.get("ts", time.time()))),
                     eur(d[0])), (14, cy, cw * 0.6, 18), 12, False, t["sub"]))
-                card.add_subview(make_label(txt, (cw * 0.55, cy, cw * 0.45 - 14, 18), 13, True,
-                                            col, "right"))
-                cy += 24
+                pw = min(cw * 0.42, 9 * len(txt) + 20)
+                pill, _ = make_pill(txt, (cw - 14 - pw, cy - 3, pw, 24), 14, col)
+                card.add_subview(pill)
+                cy += 28
             info = "Fiche PriceCharting : %s" % (e.get("title") or "?")
             if e.get("region") == "US":
                 info += " (version US : jeu non sorti en Europe)"
