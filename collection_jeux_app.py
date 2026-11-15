@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.37 (15/11/2026)"
+APP_VERSION = "3.38 (15/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -2171,6 +2171,54 @@ def fetch_prices(label, game, fixed_url=None, known_url=None, full=False, token=
                   region_of(data["url"]))
 
 
+# ---------------------------------------------------------------- code-barres
+def slug_label(url):
+    """Console d'une page PriceCharting (/game/<console>/...) : (label, région) ou None."""
+    m = re.search(r"/game/([^/]+)/", url or "")
+    if not m:
+        return None
+    slug = m.group(1)
+    for label in LABELS:
+        if PC[label][0] == slug:
+            return label, "PAL"
+    for label in LABELS:
+        if US_PC.get(label, ("",))[0] == slug:
+            return label, "US"
+    return None
+
+
+def lookup_barcode(code):
+    """Jeu correspondant à un code-barres (EAN/UPC), d'après PriceCharting.
+    Renvoie {label, title, url, region} ; PriceError si rien de reconnu."""
+    code = re.sub(r"\D", "", code or "")
+    if len(code) < 8:
+        raise PriceError("code-barres illisible")
+    final, page = NET.get(BASE + "/search-products", {"type": "prices", "q": code})
+    found = slug_label(final)
+    if found:                                   # redirigé directement sur la fiche du jeu
+        title = parse_game_page(page)[0]
+        return {"label": found[0], "region": found[1], "title": title,
+                "url": final.split("?")[0]}
+    for m in re.finditer(r'<td class="title">\s*<a href="([^"]+)"[^>]*>(.*?)</a>', page, re.S):
+        url = m.group(1)
+        url = BASE + url if url.startswith("/") else url
+        found = slug_label(url)
+        if found:
+            return {"label": found[0], "region": found[1], "title": _clean_text(m.group(2)),
+                    "url": url.split("?")[0]}
+    raise PriceError("code-barres %s inconnu sur PriceCharting" % code)
+
+
+def catalogue_name(label, title, names):
+    """Nom du jeu dans notre catalogue le plus proche du titre PriceCharting."""
+    best, score = None, 0.0
+    for g in names:
+        s = max(match_score(n, title) * k for n, k in name_variants(g))
+        if s > score:
+            best, score = g, s
+    return best if score >= 0.85 else None
+
+
 def estimate(entry, cond, fx):
     """Prix typique = cote PriceCharting (à défaut, médiane des ventes).
     Fourchette = quart le moins cher → quart le plus cher des ventes récentes."""
@@ -3240,6 +3288,10 @@ class App:
             for g in self.coll.owned_games(l):
                 if self._needs(l, g):
                     return l, g, False
+        for key in list(self.coll.wish):            # liste de souhaits : prix suivis
+            l, _, g = key.partition("|")
+            if l in GAMES_BY and self._needs(l, g):
+                return l, g, False
         for l in ([self.focus] if self.focus in self.full_wanted else []) + \
                 sorted(self.full_wanted):
             if not self.full.done(l):
@@ -3875,7 +3927,7 @@ class HomeScreen(Screen):
                                "#ff9f0a", "white", 13)
             sv.add_subview(warn)
             y += 40 + pad
-        card = ui.View(frame=(pad, y, w - 2 * pad, 210), background_color=t["card"])
+        card = ui.View(frame=(pad, y, w - 2 * pad, 248), background_color=t["card"])
         card.corner_radius = 14
         card.add_subview(gradient_view((0, 0, w - 2 * pad, 100), t["accent"], 14, 0.4))
         card.add_subview(make_label("Toutes consoles", (16, 12, w, 18), 13, False, t["sub"]))
@@ -3903,8 +3955,11 @@ class HomeScreen(Screen):
                                     lambda s: self.nav.push(WishScreen(self.app, self.nav)),
                                     t["field"], "#ff2d55", 13)
         card.add_subview(self.wish_btn)
+        card.add_subview(make_button("📷 Scanner un jeu (code-barres)", (16, 206, cw - 32, 30),
+                                     lambda s: start_scan(self.app, self.nav), t["accent"],
+                                     size=13))
         sv.add_subview(card)
-        y += 210 + pad
+        y += 248 + pad
         # --- sélecteur façon RetroArch : une rangée horizontale par famille, avec la
         # photo de chaque console
         cw, ch, gap = 148, 214, 12
@@ -4787,6 +4842,200 @@ class StatsScreen(Screen):
                                       "center", 2))
             y += 50
         sv.content_size = (w, y)
+
+
+# ====================================================================== scanner
+SCAN_KEEP = []      # objets iOS du scanner gardés en vie (pas de libération pendant le
+                    # ramasse-miettes : cause connue de plantages dans objc_util)
+
+
+def _scan_codes():
+    """Boîte où la caméra dépose les codes lus (partagée entre les versions du module)."""
+    if not hasattr(sys, "_collection_scan_codes"):
+        sys._collection_scan_codes = []
+    return sys._collection_scan_codes
+
+
+def _scan_delegate_class():
+    from objc_util import ObjCClass, ObjCInstance, create_objc_class
+    try:
+        return ObjCClass("CollectionJeuxScanDelegate")
+    except Exception:
+        pass
+
+    def captureOutput_didOutputMetadataObjects_fromConnection_(_self, _cmd, _out, _objs, _conn):
+        try:
+            for obj in ObjCInstance(_objs):
+                v = obj.stringValue()
+                if v:
+                    _scan_codes().append(str(v))
+        except Exception:
+            pass
+
+    return create_objc_class("CollectionJeuxScanDelegate",
+                             methods=[captureOutput_didOutputMetadataObjects_fromConnection_],
+                             protocols=["AVCaptureMetadataOutputObjectsDelegate"])
+
+
+class ScanSheet(ui.View):
+    """Caméra plein écran : lit le code-barres d'une boîte de jeu."""
+
+    def __init__(self, on_code):
+        super().__init__()
+        self.on_code = on_code
+        self.session = None
+        self.done = False
+        self.background_color = "black"
+        self.name = "Scanner un jeu"
+        self.update_interval = 0.2
+        self.hint = make_label("Vise le code-barres au dos de la boîte", (0, 0, 10, 10), 15,
+                               True, "white", "center", 2)
+        self.add_subview(self.hint)
+        self.frame_box = ui.View()
+        self.frame_box.border_width = 3
+        self.frame_box.border_color = "#34c759"
+        self.frame_box.corner_radius = 14
+        self.add_subview(self.frame_box)
+        self.manual = make_button("Taper le code à la main", (0, 0, 10, 10),
+                                  lambda s: self.type_code(), (1, 1, 1, 0.2), "white", 14)
+        self.add_subview(self.manual)
+        del _scan_codes()[:]
+
+    def start(self):
+        from objc_util import ObjCClass, ObjCInstance, c, c_void_p
+        session = ObjCClass("AVCaptureSession").alloc().init()
+        device = ObjCClass("AVCaptureDevice").defaultDeviceWithMediaType_("vide")
+        if device is None:
+            raise RuntimeError("pas de caméra")
+        inp = ObjCClass("AVCaptureDeviceInput").deviceInputWithDevice_error_(device, None)
+        if inp is None:
+            raise RuntimeError("accès à la caméra refusé (Réglages > Pythonista > Caméra)")
+        session.addInput_(inp)
+        out = ObjCClass("AVCaptureMetadataOutput").alloc().init()
+        delegate = _scan_delegate_class().new()
+        get_queue = c.dispatch_get_current_queue
+        get_queue.restype = c_void_p
+        out.setMetadataObjectsDelegate_queue_(delegate, ObjCInstance(get_queue()))
+        session.addOutput_(out)
+        wanted = [t for t in ("org.gs1.EAN-13", "org.gs1.EAN-8", "org.gs1.UPC-E")
+                  if t in [str(x) for x in out.availableMetadataObjectTypes()]]
+        out.setMetadataObjectTypes_(wanted or out.availableMetadataObjectTypes())
+        layer = ObjCClass("AVCaptureVideoPreviewLayer").layerWithSession_(session)
+        layer.frame = ObjCInstance(self).bounds()
+        layer.setVideoGravity_("AVLayerVideoGravityResizeAspectFill")
+        ObjCInstance(self).layer().insertSublayer_atIndex_(layer, 0)
+        SCAN_KEEP[:] = [session, out, delegate, layer, inp]
+        session.startRunning()
+        self.session = session
+        log("Scanner : caméra démarrée")
+
+    def layout(self):
+        w, h = self.width, self.height
+        self.hint.frame = (20, 60, w - 40, 50)
+        bw = min(w - 60, 320)
+        self.frame_box.frame = ((w - bw) / 2, h / 2 - 80, bw, 160)
+        self.manual.frame = (40, h - 110, w - 80, 46)
+        try:
+            if len(SCAN_KEEP) > 3 and self.session is not None:
+                from objc_util import ObjCInstance
+                SCAN_KEEP[3].frame = ObjCInstance(self).bounds()
+        except Exception:
+            pass
+
+    def update(self):
+        codes = _scan_codes()
+        if self.done or not codes:
+            return
+        code = codes[-1]
+        del codes[:]
+        if len(re.sub(r"\D", "", code)) >= 8:
+            self.finish(code)
+
+    def finish(self, code):
+        if self.done:
+            return
+        self.done = True
+        self.stop()
+        try:
+            self.close()
+        except Exception:
+            pass
+        self.on_code(code)
+
+    def stop(self):
+        try:
+            if self.session is not None:
+                self.session.stopRunning()
+        except Exception:
+            pass
+        self.session = None
+
+    def will_close(self):
+        self.update_interval = 0
+        self.stop()
+
+    @background
+    def type_code(self):
+        try:
+            code = console.input_alert("Code-barres", "Les chiffres sous le code-barres",
+                                       "", "Chercher", hide_cancel_button=False)
+        except KeyboardInterrupt:
+            return
+        on_main(self.finish, code)
+
+
+def start_scan(app, nav):
+    """Ouvre la caméra ; si elle n'est pas disponible, propose de taper le code."""
+    log("Action : scanner un jeu")
+    sheet = ScanSheet(lambda code: scan_lookup(app, nav, code))
+    try:
+        sheet.present("sheet")
+        sheet.start()
+    except Exception as ex:
+        log("Scanner : caméra indisponible (%s)" % ex, "AVERT")
+        hud("Caméra indisponible : tape le code", "error", 1.5)
+        sheet.type_code()
+
+
+@background
+def scan_lookup(app, nav, code):
+    """Code lu -> jeu PriceCharting -> jeu du catalogue -> choix de l'utilisateur."""
+    code = re.sub(r"\D", "", code or "")
+    if not code:
+        return
+    log("Scanner : code %s" % code)
+    hud("Recherche du code %s..." % code, "success", 1.0)
+    try:
+        found = lookup_barcode(code)
+    except Exception as ex:
+        log("Scanner : %s" % ex, "AVERT")
+        alert("Jeu non trouvé", "%s\n\nAstuce : ouvre la console et utilise la recherche."
+              % ex)
+        return
+    label, title = found["label"], found["title"]
+    names = list(GAMES_BY[label]) + list(app.full.names(label))
+    game = catalogue_name(label, title, names) or title
+    log("Scanner : %s -> %s | %s" % (code, label, game))
+    owned = app.coll.is_owned(label, game)
+    try:
+        choice = console.alert(game, "%s%s" % (FULL_NAME[label],
+                                               "\nDéjà dans ta collection ✓" if owned else ""),
+                               "Voir la fiche", *(() if owned else ("Je l'ai !",
+                                                                    "Liste de souhaits")))
+    except KeyboardInterrupt:
+        return
+
+    def act():
+        if game not in names and not app.coll.fixed_url(label, game):
+            app.coll.set_fixed_url(label, game, found["url"])   # fiche exacte du code
+        if choice == 2 and not app.coll.is_owned(label, game):
+            app.toggle(label, game)
+            hud("Ajouté : %s" % game, "success", 1.0)
+        elif choice == 3 and not app.coll.is_wished(label, game):
+            app.toggle_wish(label, game)
+            hud("Ajouté aux souhaits", "success", 1.0)
+        nav.push(DetailScreen(app, nav, label, game))
+    on_main(act)
 
 
 # ====================================================================== liste de souhaits
