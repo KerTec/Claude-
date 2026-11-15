@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.34 (15/11/2026)"
+APP_VERSION = "3.35 (15/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -322,8 +322,7 @@ X360 = [
     ]),
     ("Course et exclusivités", [
         "Forza Motorsport 3", "Forza Motorsport 4", "Forza Horizon",
-        "Forza Horizon 2", "Lost Odyssey", "Blue Dragon", "Castle Crashers",
-        "Limbo"
+        "Forza Horizon 2", "Lost Odyssey", "Blue Dragon"
     ])
 ]
 
@@ -3946,6 +3945,13 @@ class HomeScreen(Screen):
 
 
 # ====================================================================== grille d'une console
+FAMILY_OF = {l: f for f, ls in FAMILIES for l in ls}
+
+
+def family_color(label, default="#0a84ff"):
+    return FAMILY_COLORS.get(FAMILY_OF.get(label), default)
+
+
 @guard_class
 class ConsoleScreen(Screen):
     def __init__(self, app, nav, label):
@@ -3998,10 +4004,27 @@ class ConsoleScreen(Screen):
         self.quick_ctrl.action = self.quick_changed
         self.add_subview(self.quick_ctrl)
 
-        self.summary = make_label("", (0, 0, 10, 10), 13, True, t["text"])
-        self.add_subview(self.summary)
+        # --- en-tête : icône de la console, progression, valeur (couleur de la famille)
+        self.color = family_color(label, t["accent"])
+        self.head = ui.View(background_color=t["card"])
+        self.head.corner_radius = 14
+        self.add_subview(self.head)
+        self.head_grad = None
+        self.icon_ph = make_label(label, (0, 0, 10, 10), 15, True, self.color, "center")
+        self.icon = ui.ImageView()
+        self.icon.content_mode = ui.CONTENT_SCALE_ASPECT_FIT
+        self.summary = make_label("", (0, 0, 10, 10), 16, True, t["text"])
+        self.value_lbl = make_label("", (0, 0, 10, 10), 12, False, t["sub"])
+        self.track = ui.View(background_color=t["field"])
+        self.track.corner_radius = 3
+        self.fill = ui.View(background_color=self.color)
+        self.fill.corner_radius = 3
+        self.track.add_subview(self.fill)
         self.status = make_label("", (0, 0, 10, 10), 11, False, t["status"])
-        self.add_subview(self.status)
+        for v in (self.icon_ph, self.icon, self.summary, self.value_lbl, self.track,
+                  self.status):
+            self.head.add_subview(v)
+        self.show_icon()
 
         self.scroll = ui.ScrollView()
         self.scroll.indicator_style = app.theme["indicator"]
@@ -4040,7 +4063,19 @@ class ConsoleScreen(Screen):
             if isinstance(v, Tile) and v.t_game:
                 v.t_fill(self.label, v.t_game, self.frames[i])
 
+    def show_icon(self):
+        url = console_icon_url(self.label)
+        path = self.app.covers.path(url) if url else None
+        img = load_image(path) if path and CoverStore.has_file(path) else None
+        if url and not img:
+            self.app.covers.want(url)
+        self.icon.image = img
+        self.icon.hidden = img is None
+        self.icon_ph.hidden = img is not None
+
     def on_cover(self, url):
+        if url and url == console_icon_url(self.label):
+            self.show_icon()
         if self.hidden:
             return
         for i, v in list(self.live.items()):
@@ -4083,13 +4118,16 @@ class ConsoleScreen(Screen):
     def update_summary(self):
         got, total = self.app.coll.count(self.label), len(GAMES_BY[self.label])
         value, known = self.app.console_value(self.label)
-        txt = "%d / %d obtenus" % (got, total)
-        if got:
-            txt += "   •   valeur %s" % eur(value)
+        self.summary.text = "%d / %d obtenus" % (got, total)
+        txt = ("Valeur %s" % eur(value)) if got else "Aucun jeu pour l'instant"
         if self.complete:
             d = self.app.full.get(self.label)
             txt += "   •   +%d jeux%s" % (len(d["rows"]), "" if d.get("done") else "…")
-        self.summary.text = txt
+        self.value_lbl.text = txt
+        pct = got / float(total) if total else 0
+        tw = self.track.width
+        self.fill.frame = (0, 0, max(6, tw * pct), 6)
+        self.fill.hidden = not got
 
     def matching(self):
         q = normalize(self.query.strip())
@@ -4280,7 +4318,12 @@ class ConsoleScreen(Screen):
         kind, value = self.items[i]
         frame = self.frames[i]
         if kind == "h":
-            v = make_label(value.upper(), frame, 12, True, self.app.theme["sub"])
+            v = ui.View(frame=frame)
+            bar = ui.View(frame=(0, frame[3] / 2 - 8, 4, 16), background_color=self.color)
+            bar.corner_radius = 2
+            v.add_subview(bar)
+            v.add_subview(make_label(value.upper(), (12, 0, frame[2] - 12, frame[3]), 12,
+                                     True, self.app.theme["sub"]))
             self.scroll.add_subview(v)
             return v
         tile = self.pool.pop() if self.pool else None
@@ -4317,10 +4360,22 @@ class ConsoleScreen(Screen):
         y += 36
         self.quick_ctrl.frame = (10, y, w - 20, 30)
         y += 36
-        self.summary.frame = (12, y, w - 24, 18)
-        y += 18
-        self.status.frame = (12, y, w - 24, 16)
-        y += 18
+        hw, hh = w - 20, 84
+        self.head.frame = (10, y, hw, hh)
+        if self.head_grad is None or abs(self.head_grad.width - hw) > 1:
+            if self.head_grad is not None:
+                self.head.remove_subview(self.head_grad)
+            self.head_grad = gradient_view((0, 0, hw, hh), self.color, 14, 0.45, 0.05)
+            self.head.add_subview(self.head_grad)
+            self.head_grad.send_to_back()
+        self.icon.frame = (10, 8, 62, 50)
+        self.icon_ph.frame = (10, 8, 62, 50)
+        self.summary.frame = (82, 8, hw - 92, 22)
+        self.value_lbl.frame = (82, 30, hw - 92, 16)
+        self.track.frame = (82, 52, hw - 96, 6)
+        self.status.frame = (12, 64, hw - 24, 16)
+        y += hh + 6
+        self.update_summary()
         self.scroll.frame = (0, y, w, max(0, h - y))
         if abs(self.layout_width - w) > 1:
             self.compute_frames()
