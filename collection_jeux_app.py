@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.36 (15/11/2026)"
+APP_VERSION = "3.37 (15/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -1239,6 +1239,7 @@ class Collection:
         self.manual = {}
         self.urls = {}  # fiche PriceCharting choisie à la main : "PS2|jeu" -> url
         self.added = {}  # "PS2|jeu" -> {"ts": date d'ajout, "p": prix (€) à cette date}
+        self.wish = {}   # liste de souhaits : "PS2|jeu" -> {"ts": date, "p": prix à cette date}
         self.source = "fichier"
         self.last_backup = 0.0
         self.load()
@@ -1247,6 +1248,7 @@ class Collection:
         with self.lock:
             self.owned = {label: set() for label in LABELS}
             self.conditions, self.manual, self.urls, self.added = {}, {}, {}, {}
+            self.wish = {}
             self.load()
 
     def load(self):
@@ -1309,6 +1311,10 @@ class Collection:
         if isinstance(added, dict):
             self.added = {k: v for k, v in added.items()
                           if isinstance(k, str) and isinstance(v, dict)}
+        wish = data.get("_wish")
+        if isinstance(wish, dict):
+            self.wish = {k: v for k, v in wish.items()
+                         if isinstance(k, str) and isinstance(v, dict)}
         urls = data.get("_urls")
         if isinstance(urls, dict):
             self.urls = {k: v for k, v in urls.items()
@@ -1322,6 +1328,7 @@ class Collection:
             payload["_manual"] = dict(self.manual)
             payload["_urls"] = dict(self.urls)
             payload["_added"] = dict(self.added)
+            payload["_wish"] = dict(self.wish)
             try:
                 write_json(DATA_FILE, payload, indent=2)
             except OSError as e:
@@ -1355,6 +1362,13 @@ class Collection:
         """Jeux possédés de la sélection (pour la progression)."""
         s = self.owned[label]
         return sum(1 for g in GAMES_BY[label] if g in s)
+
+    def is_wished(self, label, game):
+        return key_of(label, game) in self.wish
+
+    def wished_games(self, label):
+        p = label + "|"
+        return [k[len(p):] for k in self.wish if k.startswith(p)]
 
     def condition(self, label, game):
         return self.conditions.get(key_of(label, game), DEFAULT_COND)
@@ -2308,7 +2322,7 @@ RARITY = [  # (seuil minimum en €, nom, nombre d'étoiles, couleur)
     (100, "Légendaire", 5, "#ff9f0a"),
 ]
 SORTS = ["N°", "Prix", "Rareté", "A–Z"]
-FILTERS = ["Tous", "Obtenus", "Manquants"]
+FILTERS = ["Tous", "Obtenus", "Manquants", "♥"]
 
 
 def rarity_for(value_eur):
@@ -3139,12 +3153,58 @@ class App:
             if now:   # prix figé à la date d'ajout
                 p = self.price(label, game)
                 self.coll.added[key] = {"ts": time.time(), "p": round(p["mid"], 2) if p else None}
+                self.coll.wish.pop(key, None)   # obtenu : sort de la liste de souhaits
             else:
                 self.coll.added.pop(key, None)
         log("Action : %s %s | %s" % ("ajout de" if now else "retrait de", label, game))
         self.save()
         self.notify(label, game)
         return now
+
+    def toggle_wish(self, label, game):
+        key = key_of(label, game)
+        with self.coll.lock:
+            if key in self.coll.wish:
+                self.coll.wish.pop(key)
+                now = False
+            else:
+                p = self.price(label, game)
+                self.coll.wish[key] = {"ts": time.time(), "p": round(p["mid"], 2) if p else None}
+                now = True
+        log("Action : %s souhaits %s | %s" % ("ajout aux" if now else "retrait des", label,
+                                              game))
+        self.save()
+        self.notify(label, game)
+        return now
+
+    def wish_delta(self, label, game):
+        """(prix quand ajouté aux souhaits, écart actuel) ou None."""
+        rec = self.coll.wish.get(key_of(label, game))
+        p = self.price(label, game)
+        if not rec or not p:
+            return None
+        if rec.get("p") is None:
+            with self.coll.lock:
+                rec["p"] = round(p["mid"], 2)
+            self.added_dirty = True
+            return rec["p"], 0.0
+        return rec["p"], round(p["mid"] - rec["p"], 2)
+
+    def wish_list(self):
+        """[(label, jeu, prix, écart)] : les baisses de prix d'abord."""
+        out = []
+        for key in list(self.coll.wish):
+            label, _, game = key.partition("|")
+            if label not in GAMES_BY:
+                continue
+            p = self.price(label, game)
+            d = self.wish_delta(label, game)
+            out.append((label, game, p["mid"] if p else None, d[1] if d else 0.0))
+        out.sort(key=lambda x: (x[3], x[1]))
+        return out
+
+    def wish_drops(self):
+        return sum(1 for x in self.wish_list() if x[3] <= -0.5)
 
     def save(self):
         err = self.coll.save()
@@ -3394,6 +3454,15 @@ def delta_text(d, short=False):
         return ("=" if short else "= prix inchangé"), "#8e8e93"
     s = eur(abs(diff)).replace(" €", "€") if short else eur(abs(diff))
     return ("▲ +" + s, UP) if diff > 0 else ("▼ -" + s, DOWN)
+
+
+def wish_text(d):
+    """Écart de prix d'un souhait : une baisse est une bonne nouvelle (vert)."""
+    if not d or abs(d[1]) < 0.01:
+        return "", "#8e8e93"
+    if d[1] < 0:
+        return "▼ -%s" % eur(-d[1]), UP
+    return "▲ +%s" % eur(d[1]), DOWN
 
 
 def make_pill(text, frame, size, bg, color="white", radius=None):
@@ -3726,6 +3795,8 @@ class HomeScreen(Screen):
         total = sum(len(GAMES_BY[l]) for l in LABELS)
         value = sum(self.app.console_value(l)[0] for l in LABELS)
         count_lbl.text = "%d / %d jeux" % (owned, total)
+        if getattr(self, "wish_btn", None):
+            self.wish_btn.title = self.wish_title()
         value_lbl.text = "Valeur estimée : %s" % eur(value)
         t = self.app.theme
         for label in list(getattr(self, "photo_refs", {})):
@@ -3739,6 +3810,13 @@ class HomeScreen(Screen):
             fill.frame = (0, 0, max(8, track_w * pct), 8)
             fill.hidden = not got
             sub.text = text
+
+    def wish_title(self):
+        n = len(self.app.coll.wish)
+        drops = self.app.wish_drops() if n else 0
+        if drops:
+            return "♥ Liste de souhaits : %d en baisse de prix !" % drops
+        return "♥ Liste de souhaits (%d)" % n
 
     def card_texts(self, label):
         got, total = self.app.coll.count(label), len(GAMES_BY[label])
@@ -3797,7 +3875,7 @@ class HomeScreen(Screen):
                                "#ff9f0a", "white", 13)
             sv.add_subview(warn)
             y += 40 + pad
-        card = ui.View(frame=(pad, y, w - 2 * pad, 172), background_color=t["card"])
+        card = ui.View(frame=(pad, y, w - 2 * pad, 210), background_color=t["card"])
         card.corner_radius = 14
         card.add_subview(gradient_view((0, 0, w - 2 * pad, 100), t["accent"], 14, 0.4))
         card.add_subview(make_label("Toutes consoles", (16, 12, w, 18), 13, False, t["sub"]))
@@ -3821,8 +3899,12 @@ class HomeScreen(Screen):
         card.add_subview(make_button("Journal / problème", (28 + (cw - 44) / 2, 130,
                                                              (cw - 44) / 2, 30),
                                      lambda s: self.open_journal(), t["field"], t["sub"], 13))
+        self.wish_btn = make_button(self.wish_title(), (16, 168, cw - 32, 30),
+                                    lambda s: self.nav.push(WishScreen(self.app, self.nav)),
+                                    t["field"], "#ff2d55", 13)
+        card.add_subview(self.wish_btn)
         sv.add_subview(card)
-        y += 172 + pad
+        y += 210 + pad
         # --- sélecteur façon RetroArch : une rangée horizontale par famille, avec la
         # photo de chaque console
         cw, ch, gap = 148, 214, 12
@@ -4143,7 +4225,11 @@ class ConsoleScreen(Screen):
             pool += self.app.full.names(self.label)
         seen = set(pool)
         pool += [g for g in sorted(owned) if g not in seen]
+        seen = set(pool)
+        pool += [g for g in sorted(self.app.coll.wished_games(self.label)) if g not in seen]
         for g in pool:
+            if f == "♥" and not self.app.coll.is_wished(self.label, g):
+                continue
             if f == "Obtenus" and g not in owned:
                 continue
             if f == "Manquants" and g in owned:
@@ -4412,6 +4498,9 @@ class Tile(ui.View):
         self.t_ok_box, self.t_ok = make_pill("✓", (0, 8, 26, 26), 15, t["owned"])
         self.t_ok_box.border_width = 2
         self.t_ok_box.border_color = "white"
+        self.t_wish_box, _ = make_pill("♥", (0, 0, 24, 24), 13, "#ff2d55")
+        self.t_wish_box.border_width = 2
+        self.t_wish_box.border_color = "white"
         self.t_rar = ui.View()                     # liseré couleur de la rareté
         self.t_rar.corner_radius = 1.5
         self.t_title = make_label("", (0, 0, 10, 10), 11, False, t["text"], "center", 2)
@@ -4421,7 +4510,7 @@ class Tile(ui.View):
         self.t_btn = ui.Button()
         self.t_btn.action = lambda s: self.t_game and self.t_on_tap(self.t_game)
         for v in (self.t_ph, self.t_img, self.t_num_box, self.t_ok_box, self.t_title, self.t_price,
-                  self.t_stars, self.t_delta, self.t_rar,
+                  self.t_stars, self.t_delta, self.t_rar, self.t_wish_box,
                   self.t_btn):
             self.add_subview(v)
 
@@ -4431,6 +4520,7 @@ class Tile(ui.View):
         self.t_ph_label.frame = (0, (cover_h - 5) / 2 - 20, w - 10, 40)
         self.t_ok_box.frame = (w - 34, 8, 26, 26)
         self.t_rar.frame = (16, h - 6, w - 32, 3)
+        self.t_wish_box.frame = (w - 33, cover_h - 30, 24, 24)
         soft_shadow(self, w, h, self.corner_radius)
         self.t_title.frame = (5, cover_h + 2, w - 10, 30)
         self.t_price.frame = (6, h - 22, w * 0.36, 15)
@@ -4461,6 +4551,7 @@ class Tile(ui.View):
         sv(self, "border_color", (rar[3] if rar else t["owned"]) if owned else t["line"])
         sv(self.t_num, "text", "#%03d" % app.num(label, game))
         sv(self.t_ok_box, "hidden", not owned)
+        sv(self.t_wish_box, "hidden", owned or not app.coll.is_wished(label, game))
         sv(self.t_title, "text", game)
         sv(self.t_title, "font", ("<System-Bold>" if owned else "<System>", 11))
         sv(self.t_title, "text_color", t["text"] if owned else t["sub"])
@@ -4698,6 +4789,90 @@ class StatsScreen(Screen):
         sv.content_size = (w, y)
 
 
+# ====================================================================== liste de souhaits
+@guard_class
+class WishScreen(Screen):
+    screen_title = "Liste de souhaits"
+
+    def __init__(self, app, nav):
+        super().__init__()
+        self.app, self.nav = app, nav
+        self.background_color = app.theme["bg"]
+        self.scroll = ui.ScrollView()
+        self.scroll.indicator_style = app.theme["indicator"]
+        self.scroll.always_bounce_vertical = True
+        self.add_subview(self.scroll)
+
+    def on_show(self):
+        self.build()
+
+    def on_data(self, label, game):
+        if not self.hidden:
+            self.later(self.build, 1.0)
+
+    def layout(self):
+        self.scroll.frame = (0, 0, self.width, self.height)
+        self.build()
+
+    def build(self):
+        app, t, sv = self.app, self.app.theme, self.scroll
+        for v in list(sv.subviews):
+            sv.remove_subview(v)
+        w = self.width
+        if w < 50:
+            return
+        pad, cw = 16, w - 32
+        y = pad
+        items = app.wish_list()
+        total = sum(x[2] for x in items if x[2])
+        head = ui.View(frame=(pad, y, cw, 78), background_color=t["card"])
+        head.corner_radius = 16
+        head.add_subview(gradient_view((0, 0, cw, 78), "#ff2d55", 16, 0.35, 0.0))
+        head.add_subview(make_label("♥ %d jeu%s à trouver" % (len(items), "x" if len(items) > 1
+                                                              else ""),
+                                    (16, 12, cw - 32, 26), 20, True, t["text"]))
+        head.add_subview(make_label("Budget estimé : %s" % eur(total), (16, 42, cw - 32, 20),
+                                    14, False, t["sub"]))
+        sv.add_subview(head)
+        y += 78 + 16
+        if not items:
+            sv.add_subview(make_label("Ouvre la fiche d'un jeu que tu n'as pas, puis touche "
+                                      "« ♡ Ajouter à ma liste de souhaits ». Tu verras ici si "
+                                      "son prix baisse.", (pad, y, cw, 70), 14, False,
+                                      t["sub"], "center", 4))
+            sv.content_size = (w, y + 80)
+            return
+        box = ui.View(frame=(pad, y, cw, 10), background_color=t["card"])
+        box.corner_radius = 14
+        by = 6
+        for i, (label, game, price, diff) in enumerate(items):
+            col = family_color(label, t["accent"])
+            dot = ui.View(frame=(12, by + 15, 8, 8), background_color=col)
+            dot.corner_radius = 4
+            box.add_subview(dot)
+            box.add_subview(make_label(game, (28, by + 4, cw - 150, 18), 14, True, t["text"]))
+            box.add_subview(make_label(FULL_NAME[label], (28, by + 22, cw - 150, 14), 11,
+                                       False, t["sub"]))
+            box.add_subview(make_label(eur(price) if price else "…", (cw - 120, by + 4, 108, 18),
+                                       15, True, t["text"], "right"))
+            txt, dcol = wish_text((0, diff))
+            if txt:
+                box.add_subview(make_label(txt, (cw - 120, by + 22, 108, 14), 11, True, dcol,
+                                           "right"))
+            b = ui.Button(frame=(0, by, cw, 42))
+            b.action = (lambda s, l=label, g=game:
+                        self.nav.push(DetailScreen(self.app, self.nav, l, g)))
+            box.add_subview(b)
+            by += 44
+            if i < len(items) - 1:
+                box.add_subview(ui.View(frame=(28, by - 2, cw - 40, 0.5),
+                                        background_color=t["line"]))
+        box.frame = (pad, y, cw, by + 6)
+        sv.add_subview(box)
+        y += by + 26
+        sv.content_size = (w, y)
+
+
 # ====================================================================== fiche d'un jeu
 @guard_class
 class DetailScreen(Screen):
@@ -4792,6 +4967,23 @@ class DetailScreen(Screen):
                                   "Toucher pour l'ajouter à ta collection",
                                   (pad, y, w - 2 * pad, 14), 11, False, t["sub"], "center"))
         y += 22
+        if not owned:
+            wished = app.coll.is_wished(label, game)
+            sv.add_subview(make_button("♥ Dans ma liste de souhaits" if wished else
+                                       "♡ Ajouter à ma liste de souhaits",
+                                       (pad, y, w - 2 * pad, 38),
+                                       lambda s: self.toggle_wish(),
+                                       "#ff2d55" if wished else t["card"],
+                                       "white" if wished else "#ff2d55", 14))
+            y += 42
+            d = app.wish_delta(label, game)
+            if wished and d:
+                txt, col = wish_text(d)
+                sv.add_subview(make_label("Prix à l'ajout aux souhaits : %s   %s" % (
+                    eur(d[0]), txt),
+                    (pad, y, w - 2 * pad, 16), 12, True, col if txt else t["sub"], "center"))
+                y += 22
+            y += 4
 
         # --- condition
         sv.add_subview(make_label("Condition de mon exemplaire", (pad, y, w, 16), 12, False,
@@ -4897,6 +5089,11 @@ class DetailScreen(Screen):
     def toggle(self):
         now = self.app.toggle(self.label, self.game)
         hud("Ajouté à la collection" if now else "Retiré de la collection", "success", 0.7)
+
+    def toggle_wish(self):
+        now = self.app.toggle_wish(self.label, self.game)
+        hud("Ajouté à ta liste de souhaits" if now else "Retiré de ta liste de souhaits",
+            "success", 0.7)
 
     def cond_changed(self, sender):
         self.app.coll.set_condition(self.label, self.game, list(COND)[sender.selected_index])
