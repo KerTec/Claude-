@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.33 (15/11/2026)"
+APP_VERSION = "3.34 (15/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -3531,7 +3531,8 @@ def soft_shadow(view, w, h, radius, opacity=0.16):
 def animate(fn, duration=0.2, completion=None):
     """Animation douce ; sans effet (mais appliquée) si elle n'est pas possible."""
     try:
-        ui.animate(fn, duration, completion=completion)
+        # Pythonista appelle toujours la fonction de fin : jamais None
+        ui.animate(fn, duration, completion=lambda *a: completion() if completion else None)
     except Exception:
         fn()
         if completion:
