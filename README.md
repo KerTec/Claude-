@@ -10,6 +10,8 @@ PS2, N64, DS, 3DS, Xbox 360, Wii, GameCube, Switch — 449 jeux.
    import requests, os; open(os.path.expanduser('~/Documents/collection_jeux.py'), 'w', encoding='utf-8').write(requests.get('https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux.py').text)
    ```
 3. Ouvrir `collection_jeux.py` dans la liste des fichiers et toucher **▶**.
+   C'est un petit lanceur : au 1er lancement il télécharge le code de l'app dans
+   `Documents/.collection_jeux/` (jamais ouvert dans l'éditeur, plus léger et plus rapide).
 
 Mises à jour : l'app les détecte toute seule (bandeau bleu « Mise à jour disponible » sur
 l'accueil, ou Journal > « Rechercher une mise à jour »). Ta collection est gardée.
