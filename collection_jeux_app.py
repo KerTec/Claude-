@@ -69,6 +69,7 @@ DATA_FILE = os.path.join(DOCS, "collection_jeux.json")
 LEGACY_FILE = os.path.join(DOCS, "collection_ps2.json")
 CACHE_FILE = os.path.join(DOCS, "prix_cache.json")
 CSV_FILE = os.path.join(DOCS, "valeur_collection.csv")
+EXPORT_FILE = os.path.join(DOCS, "ma_collection.csv")           # export complet (tableur)
 HISTORY_FILE = os.path.join(DOCS, "valeur_historique.json")  # valeur de la collection par jour
 BADGES_FILE = os.path.join(DOCS, "succes_collection.json")      # succès déjà débloqués
 PRICE_HISTORY_FILE = os.path.join(DOCS, "prix_historique.json")  # prix de mes jeux par jour
@@ -102,7 +103,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.57 (16/11/2026)"
+APP_VERSION = "3.58 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -5595,6 +5596,35 @@ def scan_lookup(app, nav, code):
     on_main(act)
 
 
+def export_csv(app):
+    """Écrit Documents/ma_collection.csv ; renvoie le nombre de jeux."""
+    def num(x):
+        return ("%.2f" % x).replace(".", ",") if x is not None else ""
+    rows = 0
+    tmp = EXPORT_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f, delimiter=";")
+        w.writerow(["Console", "Jeu", "État", "Exemplaires", "Valeur unitaire (€)",
+                    "Valeur totale (€)", "Prix payé (€)", "Prix à l'ajout (€)", "Ajouté le",
+                    "Rareté", "Note"])
+        for label in LABELS:
+            for g in app.coll.owned_games(label):
+                key = key_of(label, g)
+                p = app.price(label, g)
+                n = app.coll.copies(label, g)
+                rec = app.coll.added.get(key) or {}
+                rar = app.rarity(label, g)
+                w.writerow([FULL_NAME[label], g, app.coll.condition(label, g), n,
+                            num(p["mid"] if p else None), num(p["mid"] * n if p else None),
+                            num(app.coll.paid.get(key)), num(rec.get("p")),
+                            time.strftime("%d/%m/%Y", time.localtime(rec["ts"]))
+                            if rec.get("ts") else "", rar[1] if rar else "",
+                            app.coll.notes.get(key, "")])
+                rows += 1
+    os.replace(tmp, EXPORT_FILE)
+    return rows
+
+
 # ====================================================================== mes jeux
 @guard_class
 class MyGamesScreen(Screen):
@@ -5609,6 +5639,7 @@ class MyGamesScreen(Screen):
         t = app.theme
         self.background_color = t["bg"]
         self.sort = 0
+        self.bar_button = ("Exporter", lambda s: self.export())
         self.ctrl = ui.SegmentedControl()
         self.ctrl.segments = self.SORTS
         self.ctrl.selected_index = 0
@@ -5623,6 +5654,24 @@ class MyGamesScreen(Screen):
 
     def on_show(self):
         self.build()
+
+    def export(self):
+        """Tableau complet de la collection (CSV : Numbers, Excel, Google Sheets)."""
+        try:
+            n = export_csv(self.app)
+        except Exception:
+            log_exception("Export CSV")
+            hud("Export impossible", "error", 1.5)
+            return
+        log("Action : export CSV (%d jeux)" % n)
+        self._open_export()
+
+    @background
+    def _open_export(self):
+        try:
+            console.open_in(EXPORT_FILE)
+        except Exception:
+            alert("Export terminé", "Le fichier est dans Documents/ma_collection.csv.")
 
     def on_data(self, label, game):
         if not self.hidden:
