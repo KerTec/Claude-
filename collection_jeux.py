@@ -3,7 +3,7 @@
 # Le code de l'app est rangé à part dans Documents/.collection_jeux/ : Pythonista n'a plus
 # à ouvrir un énorme fichier dans l'éditeur (ce qui pouvait le faire planter) et garde
 # le code précompilé (lancement plus rapide).
-APP_VERSION = "3.68 (16/11/2026)"
+APP_VERSION = "3.69 (16/11/2026)"
 
 import importlib
 import os

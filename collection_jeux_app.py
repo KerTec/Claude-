@@ -53,6 +53,7 @@ DATA_FILE = os.path.join(DOCS, "collection_jeux.json")
 LEGACY_FILE = os.path.join(DOCS, "collection_ps2.json")
 CACHE_FILE = os.path.join(DOCS, "prix_cache.json")
 CSV_FILE = os.path.join(DOCS, "valeur_collection.csv")
+CARDS_FILE = os.path.join(DOCS, "cartes_jeux.json")              # jeu de cartes (boosters)
 EXPORT_FILE = os.path.join(DOCS, "ma_collection.csv")           # export complet (tableur)
 HISTORY_FILE = os.path.join(DOCS, "valeur_historique.json")  # valeur de la collection par jour
 BADGES_FILE = os.path.join(DOCS, "succes_collection.json")      # succès déjà débloqués
@@ -87,7 +88,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.68 (16/11/2026)"
+APP_VERSION = "3.69 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -1197,7 +1198,7 @@ def icloud_backup():
         return None
     try:
         os.makedirs(d, exist_ok=True)
-        for src in (DATA_FILE, HISTORY_FILE):
+        for src in (DATA_FILE, HISTORY_FILE, CARDS_FILE):
             if os.path.exists(src):
                 tmp = os.path.join(d, os.path.basename(src) + ".tmp")
                 shutil.copyfile(src, tmp)
@@ -2932,6 +2933,7 @@ class App:
         self.added_dirty = False  # prix d'ajout figés à enregistrer
         self.history = ValueHistory()
         self.price_history = PriceHistory()
+        self.cards = CardBox()
         self.bg_paused = False    # chargement en pause car l'app est en arrière-plan
         self.awake = False        # écran maintenu allumé pendant un gros chargement
         self.safe_mode = False    # démarrage sans chargement (après plantages répétés)
@@ -4118,6 +4120,11 @@ class HomeScreen(Screen):
                                      size=13))
         sv.add_subview(card)
         y += 248 + pad
+        sv.add_subview(make_button("🃏  Boosters de cartes : ouvre des paquets !",
+                                   (pad, y, w - 2 * pad, 46),
+                                   lambda s: self.nav.push(CardsScreen(self.app, self.nav)),
+                                   "#8e44ad", "white", 15))
+        y += 46 + pad
         # --- derniers ajouts (jaquettes)
         self.recent_refs = {}
         recent = self.recent()
@@ -6220,6 +6227,584 @@ class WishScreen(Screen):
         sv.add_subview(box)
         y += by + 26
         sv.content_size = (w, y)
+
+
+# ====================================================================== jeu de cartes
+# Jeu d'ouverture de boosters : chaque jeu du catalogue est une carte, sa rareté vient
+# de sa cote. Les cartes sont séparées de la vraie collection.
+PACK_SIZE = 5
+PACK_COST = 100
+DAILY_COINS = 300
+START_COINS = 500
+FREE_EVERY = 3 * 3600                     # un booster gratuit toutes les 3 h
+SELL_VALUE = [5, 12, 30, 80, 250]         # revente d'un double, par rareté
+ODDS = [60, 27, 9, 3, 1]                  # 4 premières cartes d'un booster
+ODDS_LAST = [0, 60, 28, 9, 3]             # dernière carte : au moins « Peu commun »
+PACK_ALL = "Toutes consoles"
+
+
+class CardBox:
+    """Mes cartes et mes pièces (Documents/cartes_jeux.json)."""
+
+    def __init__(self):
+        raw = read_json(CARDS_FILE)
+        raw = raw if isinstance(raw, dict) else {}
+        cards = raw.get("cards")
+        self.cards = {k: int(v) for k, v in cards.items()
+                      if isinstance(k, str) and isinstance(v, int) and v > 0} \
+            if isinstance(cards, dict) else {}
+        coins = raw.get("coins")
+        self.coins = int(coins) if isinstance(coins, (int, float)) and coins >= 0 \
+            else START_COINS
+        self.daily = raw.get("daily") if isinstance(raw.get("daily"), str) else ""
+        free = raw.get("free")
+        self.free = free if isinstance(free, (int, float)) else 0.0
+        opened = raw.get("opened")
+        self.opened = int(opened) if isinstance(opened, int) else 0
+
+    def save(self):
+        try:
+            write_json(CARDS_FILE, {"coins": self.coins, "cards": self.cards,
+                                    "daily": self.daily, "free": self.free,
+                                    "opened": self.opened})
+        except OSError as e:
+            log("Sauvegarde des cartes impossible : %s" % e, "ERREUR")
+
+    def count(self, label, game):
+        return self.cards.get(key_of(label, game), 0)
+
+    def daily_ready(self):
+        return self.daily != time.strftime("%Y-%m-%d")
+
+    def claim_daily(self):
+        if not self.daily_ready():
+            return False
+        self.daily = time.strftime("%Y-%m-%d")
+        self.coins += DAILY_COINS
+        self.save()
+        return True
+
+    def free_wait(self):
+        """Secondes avant le prochain booster gratuit (0 = disponible)."""
+        return max(0, int(self.free + FREE_EVERY - time.time()))
+
+    def doubles_value(self, app):
+        total = n = 0
+        for key, c in self.cards.items():
+            if c > 1:
+                label, _, g = key.partition("|")
+                total += (c - 1) * SELL_VALUE[card_tier(app, label, g)]
+                n += c - 1
+        return n, total
+
+    def sell_doubles(self, app):
+        n, total = self.doubles_value(app)
+        for key in list(self.cards):
+            if self.cards[key] > 1:
+                self.cards[key] = 1
+        self.coins += total
+        self.save()
+        return n, total
+
+
+def card_tier(app, label, game):
+    """Rareté de la carte (0 Commun ... 4 Légendaire), d'après la cote du jeu."""
+    rar = app.rarity(label, game) if label in GAMES_BY else None
+    return max(0, rar[2] - 1) if rar else 0
+
+
+def pack_labels(family):
+    if family == PACK_ALL:
+        return list(LABELS)
+    return [l for f, ls in FAMILIES if f == family for l in ls if l in GAMES_BY]
+
+
+def pack_pool(app, family):
+    """{rareté: [(console, jeu)]} pour une famille."""
+    pool = {i: [] for i in range(5)}
+    for label in pack_labels(family):
+        for g in GAMES_BY[label]:
+            pool[card_tier(app, label, g)].append((label, g))
+    return pool
+
+
+def draw_pack(app, family, rng=random):
+    """5 cartes : [(console, jeu, rareté)]. La dernière est au moins « Peu commun »."""
+    pool = pack_pool(app, family)
+    out = []
+    for i in range(PACK_SIZE):
+        odds = ODDS_LAST if i == PACK_SIZE - 1 else ODDS
+        tier = rng.choices(range(5), weights=odds)[0]
+        while tier > 0 and not pool[tier]:       # pas de carte de cette rareté ici
+            tier -= 1
+        while tier < 4 and not pool[tier]:
+            tier += 1
+        if not pool[tier]:
+            continue
+        label, g = rng.choice(pool[tier])
+        out.append((label, g, tier))
+    return out
+
+
+def make_card(app, label, game, w, h, count=0, new=False):
+    """Vue d'une carte : jaquette, nom, console, rareté. Renvoie (vue, image, adresse)."""
+    t = app.theme
+    tier = card_tier(app, label, game)
+    color = RARITY[tier][3]
+    card = ui.View(frame=(0, 0, w, h), background_color=t["card"])
+    card.corner_radius = 10
+    card.border_width = 2 if tier < 3 else 3
+    card.border_color = color
+    card.add_subview(gradient_view((0, 0, w, h * 0.5), color, 10, 0.4 if tier < 3 else 0.7))
+    ih = h - 44
+    ph = make_label(game, (6, 6, w - 12, ih - 6), max(9, int(w / 9)), True, t["sub"],
+                    "center", 4)
+    card.add_subview(ph)
+    iv = ui.ImageView(frame=(6, 6, w - 12, ih - 6))
+    iv.content_mode = ui.CONTENT_SCALE_ASPECT_FIT
+    card.add_subview(iv)
+    url = app.cover_url(label, game)
+    path = app.covers.path(url) if url else None
+    img = load_image(path) if path and CoverStore.has_file(path) else None
+    if img is not None:
+        iv.image = img
+        ph.hidden = True
+    elif url:
+        app.covers.want(url)
+    card.add_subview(make_label(game, (4, ih + 2, w - 8, 14), max(8, int(w / 11)), True,
+                                t["text"], "center"))
+    card.add_subview(make_label("%s  %s" % (label, "★" * (tier + 1)), (4, ih + 16, w - 8, 12),
+                                max(8, int(w / 12)), True, color, "center"))
+    if new:
+        pill, _ = make_pill("NOUVEAU", (4, 4, 58, 16), 9, "#ff2d55", radius=5)
+        card.add_subview(pill)
+    elif count > 1:
+        pill, _ = make_pill("×%d" % count, (w - 34, 4, 30, 16), 10, (0, 0, 0, 0.75), radius=5)
+        card.add_subview(pill)
+    return card, iv, (url if img is None else None)
+
+
+@guard_class
+class CardsScreen(Screen):
+    """Accueil du jeu : pièces, bonus, choix du booster, album."""
+    screen_title = "Boosters"
+
+    def __init__(self, app, nav):
+        super().__init__()
+        self.app, self.nav = app, nav
+        self.background_color = app.theme["bg"]
+        self.bar_button = ("Album", lambda s: self.nav.push(AlbumScreen(self.app, self.nav)))
+        self.scroll = ui.ScrollView()
+        self.scroll.indicator_style = app.theme["indicator"]
+        self.scroll.always_bounce_vertical = True
+        self.add_subview(self.scroll)
+        self.free_btn = None
+
+    def on_show(self):
+        self.build()
+
+    def layout(self):
+        self.scroll.frame = (0, 0, self.width, self.height)
+        self.build()
+
+    def idle(self):
+        if self.free_btn is not None and getattr(self, "ticks", 0) % 4 == 0:
+            self.free_btn.title = self.free_title()
+        self.ticks = getattr(self, "ticks", 0) + 1
+
+    def free_title(self):
+        wait = self.app.cards.free_wait()
+        if not wait:
+            return "🎁  Booster gratuit disponible !"
+        return "Prochain booster gratuit dans %d h %02d min" % (wait // 3600, wait % 3600 // 60)
+
+    def claim(self):
+        if self.app.cards.claim_daily():
+            haptic()
+            hud("+%d pièces" % DAILY_COINS, "success", 1.0)
+            log("Cartes : bonus du jour")
+        self.build()
+
+    def open_pack(self, family, free=False):
+        box = self.app.cards
+        if free:
+            if box.free_wait():
+                return
+            box.free = time.time()
+        elif box.coins < PACK_COST:
+            hud("Pas assez de pièces (%d)" % PACK_COST, "error", 1.2)
+            return
+        else:
+            box.coins -= PACK_COST
+        pack = draw_pack(self.app, family)
+        fresh = []
+        for label, g, _ in pack:
+            key = key_of(label, g)
+            fresh.append(key not in box.cards)
+            box.cards[key] = box.cards.get(key, 0) + 1
+        box.opened += 1
+        box.save()                      # enregistré avant l'animation : rien n'est perdu
+        log("Cartes : booster %s%s -> %s" % (family, " (gratuit)" if free else "",
+                                             ", ".join(g for _, g, _ in pack)))
+        self.nav.push(PackScreen(self.app, self.nav, family, pack, fresh))
+
+    def build(self):
+        app, t, sv = self.app, self.app.theme, self.scroll
+        for v in list(sv.subviews):
+            sv.remove_subview(v)
+        w = self.width
+        if w < 50:
+            return
+        box = app.cards
+        pad, cw = 14, w - 28
+        y = pad
+        head = ui.View(frame=(pad, y, cw, 96), background_color=t["card"])
+        head.corner_radius = 16
+        head.add_subview(gradient_view((0, 0, cw, 96), "#ff9f0a", 16, 0.4))
+        head.add_subview(make_label("🪙 %d pièces" % box.coins, (16, 10, cw - 32, 32), 26, True,
+                                    t["text"]))
+        total = sum(len(GAMES_BY[l]) for l in LABELS)
+        head.add_subview(make_label("%d / %d cartes  •  %s ouvert%s" % (
+            len(box.cards), total, plural(box.opened, "booster"), "s" if box.opened > 1 else ""),
+            (16, 46, cw - 32, 18), 13, False, t["sub"]))
+        n, value = box.doubles_value(app)
+        if n:
+            head.add_subview(make_label("%s à revendre dans l'album (+%d pièces)" % (
+                plural(n, "double"), value), (16, 68, cw - 32, 18), 12, True, "#ff9f0a"))
+        sv.add_subview(head)
+        y += 96 + 12
+        if box.daily_ready():
+            sv.add_subview(make_button("☀️  Bonus du jour : +%d pièces" % DAILY_COINS,
+                                       (pad, y, cw, 44), lambda s: self.claim(), "#34c759",
+                                       "white", 15))
+            y += 44 + 10
+        ready = not box.free_wait()
+        self.free_btn = make_button(self.free_title(), (pad, y, cw, 44),
+                                    lambda s: self.open_pack(PACK_ALL, free=True),
+                                    "#ff2d55" if ready else t["card"],
+                                    "white" if ready else t["sub"], 14)
+        sv.add_subview(self.free_btn)
+        y += 44 + 18
+        sv.add_subview(make_label("CHOISIS TON BOOSTER  (%d cartes, %d pièces)" % (
+            PACK_SIZE, PACK_COST), (pad + 2, y, cw, 18), 13, True, t["sub"]))
+        y += 26
+        families = [f for f, _ in FAMILIES] + [PACK_ALL]
+        cols = 2
+        bw = (cw - 12) / cols
+        bh = 150
+        for i, family in enumerate(families):
+            color = FAMILY_COLORS.get(family, t["accent"])
+            x = pad + (i % cols) * (bw + 12)
+            yy = y + (i // cols) * (bh + 12)
+            pack = ui.View(frame=(x, yy, bw, bh), background_color=color)
+            pack.corner_radius = 16
+            pack.add_subview(gradient_view((0, 0, bw, bh), "white", 16, 0.35))
+            pack.add_subview(make_label("BOOSTER", (0, 22, bw, 16), 11, True,
+                                        (1, 1, 1, 0.8), "center"))
+            pack.add_subview(make_label(family, (6, 40, bw - 12, 52), 20, True, "white",
+                                        "center", 2))
+            labels = pack_labels(family)
+            got = sum(1 for l in labels for g in GAMES_BY[l] if key_of(l, g) in box.cards)
+            tot = sum(len(GAMES_BY[l]) for l in labels)
+            pack.add_subview(make_label("%d / %d cartes" % (got, tot), (0, 96, bw, 16), 12,
+                                        False, (1, 1, 1, 0.9), "center"))
+            price, _ = make_pill("🪙 %d" % PACK_COST, (bw / 2 - 40, 118, 80, 22), 12,
+                                 (0, 0, 0, 0.35))
+            pack.add_subview(price)
+            b = ui.Button(frame=(0, 0, bw, bh))
+            b.action = lambda s, f=family: self.open_pack(f)
+            pack.add_subview(b)
+            sv.add_subview(pack)
+        rows = (len(families) + cols - 1) // cols
+        y += rows * (bh + 12) + 6
+        sv.add_subview(make_label("Chances : Commun 60 %  •  Peu commun 27 %  •  Rare 9 %  •  "
+                                  "Très rare 3 %  •  Légendaire 1 %. La dernière carte est au "
+                                  "moins « Peu commun ». Pièces gagnées en jouant, jamais "
+                                  "d'argent réel.", (pad, y, cw, 62), 11, False, t["sub"],
+                                  "center", 4))
+        y += 70
+        sv.content_size = (w, y)
+
+
+@guard_class
+class PackScreen(Screen):
+    """Ouverture d'un booster : on déchire le paquet, puis on retourne les cartes."""
+
+    def __init__(self, app, nav, family, pack, fresh):
+        super().__init__()
+        self.app, self.nav, self.family = app, nav, family
+        self.pack, self.fresh = pack, fresh
+        self.screen_title = "Booster " + family
+        self.background_color = app.theme["bg"]
+        self.torn = False
+        self.shown = [False] * len(pack)
+        self.slots = {}             # index -> vue affichée
+        self.waiting = {}           # adresse de jaquette -> image à remplir
+
+    def layout(self):
+        self.build()
+
+    def on_cover(self, url):
+        iv = self.waiting.pop(url, None)
+        if iv is not None:
+            path = self.app.covers.path(url)
+            iv.image = load_image(path) if CoverStore.has_file(path) else None
+
+    def card_frame(self, i):
+        w = self.width
+        cw = min((w - 4 * 12) / 3.0, 150)
+        ch = cw * 1.55
+        top = 3 if len(self.pack) > 3 else len(self.pack)
+        if i < 3:
+            x0 = (w - top * cw - (top - 1) * 12) / 2
+            return (x0 + i * (cw + 12), 20, cw, ch)
+        rest = len(self.pack) - 3
+        x0 = (w - rest * cw - (rest - 1) * 12) / 2
+        return (x0 + (i - 3) * (cw + 12), 20 + ch + 14, cw, ch)
+
+    def build(self):
+        for v in list(self.subviews):
+            self.remove_subview(v)
+        self.slots = {}
+        w, h = self.width, self.height
+        if w < 50:
+            return
+        t = self.app.theme
+        color = FAMILY_COLORS.get(self.family, t["accent"])
+        if not self.torn:
+            pw, ph = min(220, w - 120), min(320, h - 200)
+            pack = ui.View(frame=((w - pw) / 2, (h - ph) / 2 - 30, pw, ph),
+                           background_color=color)
+            pack.corner_radius = 18
+            pack.add_subview(gradient_view((0, 0, pw, ph), "white", 18, 0.4))
+            pack.add_subview(make_label("BOOSTER", (0, ph * 0.3, pw, 20), 14, True,
+                                        (1, 1, 1, 0.8), "center"))
+            pack.add_subview(make_label(self.family, (8, ph * 0.3 + 26, pw - 16, 70), 26, True,
+                                        "white", "center", 2))
+            pack.add_subview(make_label("%d cartes" % len(self.pack), (0, ph - 46, pw, 20),
+                                        13, False, (1, 1, 1, 0.9), "center"))
+            b = ui.Button(frame=(0, 0, pw, ph))
+            b.action = lambda s: self.tear()
+            pack.add_subview(b)
+            self.add_subview(pack)
+            self.pack_view = pack
+            self.add_subview(make_label("Touche le booster pour l'ouvrir",
+                                        (0, (h + ph) / 2 - 10, w, 24), 15, True, t["sub"],
+                                        "center"))
+            return
+        for i in range(len(self.pack)):
+            self.show_slot(i)
+        y = self.card_frame(len(self.pack) - 1)[1] + self.card_frame(0)[3] + 20
+        left = self.shown.count(False)
+        if left:
+            self.add_subview(make_button("Tout retourner (%d)" % left, (40, y, w - 80, 44),
+                                         lambda s: self.flip_all(), t["card"], t["accent"],
+                                         15))
+        else:
+            best = max(tier for _, _, tier in self.pack) if self.pack else 0
+            news = sum(1 for f in self.fresh if f)
+            self.add_subview(make_label("%s  •  meilleure carte : %s" % (
+                plural(news, "nouvelle carte").replace("nouvelle cartes", "nouvelles cartes"),
+                RARITY[best][1]), (10, y, w - 20, 20), 14, True, RARITY[best][3], "center"))
+            self.add_subview(make_button("Ouvrir un autre booster", (40, y + 30, w - 80, 44),
+                                         lambda s: self.nav.pop(), t["accent"], "white", 15))
+
+    def show_slot(self, i):
+        old = self.slots.pop(i, None)
+        if old is not None:
+            self.remove_subview(old)
+        frame = self.card_frame(i)
+        label, g, tier = self.pack[i]
+        if self.shown[i]:
+            card, iv, url = make_card(self.app, label, g, frame[2], frame[3],
+                                      self.app.cards.count(label, g), self.fresh[i])
+            if url:
+                self.waiting[url] = iv
+            card.frame = frame
+        else:
+            t = self.app.theme
+            card = ui.View(frame=frame, background_color=FAMILY_COLORS.get(self.family,
+                                                                             t["accent"]))
+            card.corner_radius = 10
+            card.add_subview(gradient_view((0, 0, frame[2], frame[3]), "white", 10, 0.3))
+            card.add_subview(make_label("?", (0, 0, frame[2], frame[3]), 44, True,
+                                        (1, 1, 1, 0.85), "center"))
+            b = ui.Button(frame=(0, 0, frame[2], frame[3]))
+            b.action = lambda s, i=i: self.flip(i)
+            card.add_subview(b)
+        self.add_subview(card)
+        self.slots[i] = card
+        return card
+
+    def tear(self):
+        self.torn = True
+        haptic(2)
+        self.build()
+
+    def flip(self, i, rebuild=True):
+        if self.shown[i]:
+            return
+        self.shown[i] = True
+        tier = self.pack[i][2]
+        card = self.show_slot(i)
+        haptic(2 if tier >= 3 else 0)
+        if tier >= 2:
+            pop_effect(card)
+        if tier == 4:
+            hud("🌟 LÉGENDAIRE : %s" % self.pack[i][1], "success", 1.5)
+        if rebuild and all(self.shown):
+            self.build()
+        elif rebuild:
+            self.refresh_button()
+
+    def refresh_button(self):
+        for v in list(self.subviews):
+            if isinstance(v, ui.Button):
+                v.title = "Tout retourner (%d)" % self.shown.count(False)
+
+    def flip_all(self):
+        for i in range(len(self.pack)):
+            self.flip(i, rebuild=False)
+        self.build()
+
+
+@guard_class
+class AlbumScreen(Screen):
+    """Mes cartes : progression par console, revente des doubles, cartes par rareté."""
+    screen_title = "Album"
+    MAX = 60
+
+    def __init__(self, app, nav):
+        super().__init__()
+        self.app, self.nav = app, nav
+        t = app.theme
+        self.background_color = t["bg"]
+        self.mode = 0
+        self.ctrl = ui.SegmentedControl()
+        self.ctrl.segments = ["Mes cartes", "Par console"]
+        self.ctrl.selected_index = 0
+        self.ctrl.action = self.changed
+        self.add_subview(self.ctrl)
+        self.scroll = ui.ScrollView()
+        self.scroll.indicator_style = t["indicator"]
+        self.scroll.always_bounce_vertical = True
+        self.add_subview(self.scroll)
+        self.waiting = {}
+
+    def on_show(self):
+        self.build()
+
+    def changed(self, sender):
+        self.mode = sender.selected_index
+        self.build()
+
+    def layout(self):
+        w, h = self.width, self.height
+        self.ctrl.frame = (10, 8, w - 20, 30)
+        self.scroll.frame = (0, 46, w, max(0, h - 46))
+        self.build()
+
+    def on_cover(self, url):
+        iv = self.waiting.pop(url, None)
+        if iv is not None:
+            path = self.app.covers.path(url)
+            iv.image = load_image(path) if CoverStore.has_file(path) else None
+
+    def sell(self):
+        n, total = self.app.cards.sell_doubles(self.app)
+        if n:
+            haptic()
+            hud("+%d pièces (%s)" % (total, plural(n, "double")), "success", 1.2)
+            log("Cartes : %d doubles vendus, +%d pièces" % (n, total))
+        self.build()
+
+    def owned(self):
+        """Mes cartes, les plus rares d'abord : [(rareté, console, jeu, nombre)]."""
+        out = []
+        for key, c in self.app.cards.cards.items():
+            label, _, g = key.partition("|")
+            if label in GAMES_BY:
+                out.append((card_tier(self.app, label, g), label, g, c))
+        out.sort(key=lambda x: (-x[0], x[2]))
+        return out
+
+    def build(self):
+        app, t, sv = self.app, self.app.theme, self.scroll
+        for v in list(sv.subviews):
+            sv.remove_subview(v)
+        self.waiting = {}
+        w = self.width
+        if w < 50:
+            return
+        box = app.cards
+        pad, cw = 12, w - 24
+        y = 6
+        n, value = box.doubles_value(app)
+        if n:
+            sv.add_subview(make_button("Vendre mes %s : +%d pièces" % (plural(n, "double"),
+                                                                       value),
+                                       (pad, y, cw, 40), lambda s: self.sell(), "#ff9f0a",
+                                       "white", 14))
+            y += 40 + 10
+        cards = self.owned()
+        if not cards:
+            sv.add_subview(make_label("Pas encore de carte : ouvre ton premier booster !",
+                                      (pad, y + 20, cw, 40), 15, False, t["sub"], "center", 2))
+            sv.content_size = (w, y + 80)
+            return
+        if self.mode == 0:
+            counts = collections.Counter(c[0] for c in cards)
+            sv.add_subview(make_label("   ".join("%s %d" % ("★" * (i + 1), counts.get(i, 0))
+                                                  for i in range(4, -1, -1)),
+                                      (pad, y, cw, 18), 12, True, t["sub"], "center"))
+            y += 26
+            cols = 3
+            cardw = (cw - (cols - 1) * 10) / cols
+            cardh = cardw * 1.55
+            for i, (tier, label, g, c) in enumerate(cards[:self.MAX]):
+                card, iv, url = make_card(app, label, g, cardw, cardh, c)
+                card.frame = (pad + (i % cols) * (cardw + 10), y + (i // cols) * (cardh + 10),
+                              cardw, cardh)
+                if url:
+                    self.waiting[url] = iv
+                sv.add_subview(card)
+            shown = min(len(cards), self.MAX)
+            y += ((shown + cols - 1) // cols) * (cardh + 10)
+            if len(cards) > self.MAX:
+                sv.add_subview(make_label("Les %d cartes les plus rares sont affichées (%d en "
+                                          "tout)." % (self.MAX, len(cards)), (pad, y, cw, 20),
+                                          12, False, t["sub"], "center"))
+                y += 26
+        else:
+            for family, labels in FAMILIES:
+                color = FAMILY_COLORS.get(family, t["accent"])
+                sv.add_subview(make_label(family.upper(), (pad + 2, y + 4, cw, 18), 12, True,
+                                          t["sub"]))
+                y += 26
+                for label in labels:
+                    if label not in GAMES_BY:
+                        continue
+                    tot = len(GAMES_BY[label])
+                    got = sum(1 for g in GAMES_BY[label] if key_of(label, g) in box.cards)
+                    row = ui.View(frame=(pad, y, cw, 44), background_color=t["card"])
+                    row.corner_radius = 10
+                    row.add_subview(make_label(FULL_NAME[label], (12, 4, cw - 110, 18), 13,
+                                               True, t["text"]))
+                    row.add_subview(make_label("%d / %d" % (got, tot), (cw - 100, 4, 88, 18),
+                                               13, True, t["owned"] if got else t["sub"],
+                                               "right"))
+                    track = ui.View(frame=(12, 28, cw - 24, 6), background_color=t["field"])
+                    track.corner_radius = 3
+                    fill = ui.View(frame=(0, 0, max(6, (cw - 24) * got / float(tot or 1)), 6),
+                                   background_color=color)
+                    fill.corner_radius = 3
+                    fill.hidden = not got
+                    track.add_subview(fill)
+                    row.add_subview(track)
+                    sv.add_subview(row)
+                    y += 50
+                y += 6
+        sv.content_size = (w, y + 10)
 
 
 # ====================================================================== fiche d'un jeu
