@@ -91,7 +91,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.43 (16/11/2026)"
+APP_VERSION = "3.44 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -1240,6 +1240,7 @@ class Collection:
         self.manual = {}
         self.urls = {}  # fiche PriceCharting choisie à la main : "PS2|jeu" -> url
         self.added = {}  # "PS2|jeu" -> {"ts": date d'ajout, "p": prix (€) à cette date}
+        self.paid = {}   # prix payé par jeu : "PS2|jeu" -> €
         self.wish = {}   # liste de souhaits : "PS2|jeu" -> {"ts": date, "p": prix à cette date}
         self.source = "fichier"
         self.last_backup = 0.0
@@ -1249,7 +1250,7 @@ class Collection:
         with self.lock:
             self.owned = {label: set() for label in LABELS}
             self.conditions, self.manual, self.urls, self.added = {}, {}, {}, {}
-            self.wish = {}
+            self.wish, self.paid = {}, {}
             self.load()
 
     def load(self):
@@ -1312,6 +1313,11 @@ class Collection:
         if isinstance(added, dict):
             self.added = {k: v for k, v in added.items()
                           if isinstance(k, str) and isinstance(v, dict)}
+        paid = data.get("_paid")
+        if isinstance(paid, dict):
+            self.paid = {k: float(v) for k, v in paid.items()
+                         if isinstance(k, str) and isinstance(v, (int, float))
+                         and not isinstance(v, bool) and v >= 0}
         wish = data.get("_wish")
         if isinstance(wish, dict):
             self.wish = {k: v for k, v in wish.items()
@@ -1330,6 +1336,7 @@ class Collection:
             payload["_urls"] = dict(self.urls)
             payload["_added"] = dict(self.added)
             payload["_wish"] = dict(self.wish)
+            payload["_paid"] = dict(self.paid)
             try:
                 write_json(DATA_FILE, payload, indent=2)
             except OSError as e:
@@ -3661,6 +3668,16 @@ def animate(fn, duration=0.2, completion=None):
             completion()
 
 
+def haptic(style=1):
+    """Petite vibration (comme les apps iOS) quand on coche un jeu."""
+    try:
+        from objc_util import ObjCClass
+        gen = ObjCClass("UIImpactFeedbackGenerator").alloc().initWithStyle_(style)
+        gen.impactOccurred()
+    except Exception:
+        pass
+
+
 def pop_effect(view):
     """Petit « rebond » (jeu coché)."""
     try:
@@ -4496,6 +4513,7 @@ class ConsoleScreen(Screen):
     def tapped(self, game):
         if self.quick:
             now = self.app.toggle(self.label, game)
+            haptic()
             hud(("✓ " if now else "✗ ") + game, "success", 0.5)
             if self.filter_index:
                 self.rebuild()
@@ -4780,7 +4798,16 @@ def collection_stats(app):
             by_console.append((value, label, n))
     games.sort(key=lambda x: -x[0])
     by_console.sort(key=lambda x: -x[0])
+    spent = worth = 0.0
+    for key, v in list(app.coll.paid.items()):
+        label, _, g = key.partition("|")
+        if label in GAMES_BY and app.coll.is_owned(label, g):
+            p = app.price(label, g)
+            if p:
+                spent += v
+                worth += p["mid"]
     return {"games": games, "consoles": by_console, "rarity": by_rarity,
+            "spent": spent, "worth": worth,
             "value": sum(x[0] for x in games), "paid": paid, "gain": gain,
             "count": sum(x[2] for x in by_console)}
 
@@ -4906,6 +4933,17 @@ class StatsScreen(Screen):
                                         (16, 92, cw - 32, 20), 14, True, col))
         sv.add_subview(card)
         y += 120 + 20
+        if st["spent"]:
+            box = ui.View(frame=(pad, y, cw, 64), background_color=t["card"])
+            box.corner_radius = 14
+            box.add_subview(make_label("Payé %s  →  vaut %s aujourd'hui" % (
+                eur(st["spent"]), eur(st["worth"])), (16, 10, cw - 32, 20), 14, True, t["text"]))
+            txt, col = delta_text((st["spent"], st["worth"] - st["spent"]))
+            box.add_subview(make_label(("Bénéfice " if st["worth"] >= st["spent"] else "Perte ")
+                                       + txt + "  (jeux avec prix payé)", (16, 34, cw - 32, 18),
+                                       13, True, col))
+            sv.add_subview(box)
+            y += 64 + 20
 
         # --- évolution
         app.history.record(st["value"], st["count"])
@@ -5746,6 +5784,18 @@ class DetailScreen(Screen):
             card.add_subview(make_label("Mon prix : %s" % eur(manual), (14, cy, cw - 28, 24), 18,
                                         True, t["text"]))
             cy += 28
+        paid = app.coll.paid.get(key_of(label, game))
+        now_p = app.price(label, game)
+        if owned and paid is not None:
+            card.add_subview(make_label("Payé : %s" % eur(paid), (14, cy, cw * 0.5, 22), 15,
+                                        True, t["text"]))
+            if now_p:
+                txt, col = delta_text((paid, now_p["mid"] - paid), short=True)
+                if txt and txt != "=":
+                    pw = min(cw * 0.45, 9 * len(txt) + 20)
+                    pill, _ = make_pill(txt, (cw - 14 - pw, cy - 1, pw, 24), 14, col)
+                    card.add_subview(pill)
+            cy += 30
         if PriceCache.has_price(e):
             for c in COND:
                 est = estimate(e, c, fx)
@@ -5804,6 +5854,7 @@ class DetailScreen(Screen):
         # --- actions
         actions = [
             ("Saisir mon prix", self.ask_manual),
+            ("Prix payé", self.ask_paid),
             ("Effacer mon prix" if manual is not None else "Recharger le prix",
              self.clear_manual if manual is not None else self.reload),
             ("eBay (vendus)", self.open_ebay),
@@ -5826,10 +5877,12 @@ class DetailScreen(Screen):
     # ---------------------------------------------------------- actions
     def toggle(self):
         now = self.app.toggle(self.label, self.game)
+        haptic()
         hud("Ajouté à la collection" if now else "Retiré de la collection", "success", 0.7)
 
     def toggle_wish(self):
         now = self.app.toggle_wish(self.label, self.game)
+        haptic()
         hud("Ajouté à ta liste de souhaits" if now else "Retiré de ta liste de souhaits",
             "success", 0.7)
 
@@ -5856,6 +5909,33 @@ class DetailScreen(Screen):
         self.app.save()
         self.app.notify(self.label, self.game)
         hud("Prix enregistré", "success", 0.8)
+
+    @background
+    def ask_paid(self):
+        key = key_of(self.label, self.game)
+        cur = self.app.coll.paid.get(key)
+        try:
+            txt = console.input_alert(self.game, "Combien l'as-tu payé ? (en €, vide = effacer)",
+                                      ("%.2f" % cur).replace(".", ",") if cur is not None else "",
+                                      "Enregistrer")
+        except KeyboardInterrupt:
+            return
+        if not (txt or "").strip():
+            self.app.coll.paid.pop(key, None)
+        else:
+            try:
+                value = parse_euros(txt)
+            except ValueError:
+                alert("Prix invalide", "Écris un nombre positif, par exemple 12,50.")
+                return
+            with self.app.coll.lock:
+                self.app.coll.paid[key] = value
+            if not self.app.coll.is_owned(self.label, self.game):
+                on_main(self.app.toggle, self.label, self.game)   # payé = je l'ai
+        log("Action : prix payé %s | %s" % (self.label, self.game))
+        self.app.save()
+        self.app.notify(self.label, self.game)
+        hud("Prix payé enregistré", "success", 0.8)
 
     def clear_manual(self):
         self.app.coll.set_manual(self.label, self.game, None)
