@@ -74,6 +74,13 @@ TOKEN_FILE = os.path.join(DOCS, "pricecharting_token.txt")
 COVER_DIR = os.path.join(DOCS, "jaquettes")
 FULL_DIR = os.path.join(DOCS, "catalogue_complet")   # tous les jeux de chaque console
 BACKUP_DIR = os.path.join(DOCS, "sauvegardes_collection")  # copies de sécurité
+# Copie de la collection dans iCloud Drive (Pythonista) : survit même à la suppression
+# de l'app ou au changement d'iPhone.
+ICLOUD_DIRS = ["/private/var/mobile/Library/Mobile Documents/iCloud~com~omz-software~Pythonista3/"
+               "Documents",
+               os.path.expanduser("~/Library/Mobile Documents/iCloud~com~omz-software~Pythonista3/"
+                                  "Documents")]
+ICLOUD_NAME = "Sauvegarde collection jeux"
 BACKUP_KEEP = 30            # nombre de sauvegardes gardées
 BACKUP_EVERY = 3600         # sauvegarde automatique au plus toutes les heures
 
@@ -91,7 +98,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.44 (16/11/2026)"
+APP_VERSION = "3.45 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -1186,9 +1193,42 @@ def read_collection_file(path):
     return None
 
 
+def icloud_dir():
+    """Dossier de sauvegarde dans iCloud Drive, ou None si iCloud n'est pas disponible."""
+    for d in ICLOUD_DIRS:
+        if os.path.isdir(d):
+            return os.path.join(d, ICLOUD_NAME)
+    return None
+
+
+def icloud_backup():
+    """Copie la collection (et l'historique de valeur) dans iCloud Drive."""
+    d = icloud_dir()
+    if not d:
+        return None
+    try:
+        os.makedirs(d, exist_ok=True)
+        for src in (DATA_FILE, HISTORY_FILE):
+            if os.path.exists(src):
+                tmp = os.path.join(d, os.path.basename(src) + ".tmp")
+                shutil.copyfile(src, tmp)
+                os.replace(tmp, os.path.join(d, os.path.basename(src)))
+        return os.path.join(d, os.path.basename(DATA_FILE))
+    except OSError as e:
+        log("Copie iCloud impossible : %s" % e, "AVERT")
+        return None
+
+
 def list_backups():
-    """[(chemin, date, nombre de jeux, raison)] du plus récent au plus ancien."""
+    """[(chemin, date, nombre de jeux, raison)] du plus récent au plus ancien
+    (copie iCloud comprise)."""
     out = []
+    d = icloud_dir()
+    p = os.path.join(d, os.path.basename(DATA_FILE)) if d else None
+    if p and os.path.exists(p):
+        data = read_json(p)
+        if is_collection(data):
+            out.append((p, os.path.getmtime(p), collection_size(data), "iCloud"))
     for p in glob.glob(os.path.join(BACKUP_DIR, "collection_*.json")):
         data = read_json(p)
         if not is_collection(data):
@@ -1208,7 +1248,7 @@ def backup_collection(reason):
         os.makedirs(BACKUP_DIR, exist_ok=True)
         with open(DATA_FILE, "rb") as f:
             content = f.read()
-        backups = list_backups()
+        backups = [b for b in list_backups() if b[3] != "iCloud"]
         if backups:
             with open(backups[0][0], "rb") as f:
                 if f.read() == content:
@@ -1217,7 +1257,9 @@ def backup_collection(reason):
                             % (time.strftime("%Y%m%d-%H%M%S"), re.sub(r"\W+", "-", reason)))
         with open(path, "wb") as f:
             f.write(content)
-        backups = list_backups()
+        if icloud_backup():
+            log("Collection copiée dans iCloud Drive")
+        backups = [b for b in list_backups() if b[3] != "iCloud"]
         biggest = max(backups, key=lambda b: b[2])[0] if backups else None
         for old in backups[BACKUP_KEEP:]:
             if old[0] != biggest:                 # la plus complète est toujours gardée
@@ -6093,6 +6135,11 @@ def diagnostic(app):
             "%d (dernière : %s, %d jeux)" % (len(backups), time.strftime(
                 "%d/%m %H:%M", time.localtime(backups[0][1])), backups[0][2])
             if backups else "aucune"),
+        "Copie iCloud Drive : %s" % (
+            "oui (%s)" % time.strftime("%d/%m %H:%M", time.localtime(
+                [b for b in backups if b[3] == "iCloud"][0][1]))
+            if any(b[3] == "iCloud" for b in backups) else
+            ("pas encore" if icloud_dir() else "iCloud indisponible")),
         "Prix connus : %d / %d   •   jeux sans prix (erreur) : %d" % (
             priced, sum(len(GAMES_BY[l]) for l in LABELS), len(errors)),
         "Jaquettes : %s (file d'attente %d, échecs %d)" % (
