@@ -70,6 +70,7 @@ LEGACY_FILE = os.path.join(DOCS, "collection_ps2.json")
 CACHE_FILE = os.path.join(DOCS, "prix_cache.json")
 CSV_FILE = os.path.join(DOCS, "valeur_collection.csv")
 HISTORY_FILE = os.path.join(DOCS, "valeur_historique.json")  # valeur de la collection par jour
+BADGES_FILE = os.path.join(DOCS, "succes_collection.json")      # succès déjà débloqués
 PRICE_HISTORY_FILE = os.path.join(DOCS, "prix_historique.json")  # prix de mes jeux par jour
 DEBUG_FILE = os.path.join(DOCS, "debug_pricecharting.html")
 TOKEN_FILE = os.path.join(DOCS, "pricecharting_token.txt")
@@ -101,7 +102,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.49 (16/11/2026)"
+APP_VERSION = "3.50 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -3262,6 +3263,11 @@ class App:
         log("Action : %s %s | %s" % ("ajout de" if now else "retrait de", label, game))
         self.save()
         self.notify(label, game)
+        if now:
+            try:
+                check_badges(self)
+            except Exception:
+                log_exception("Succès")
         return now
 
     def toggle_wish(self, label, game):
@@ -4918,6 +4924,136 @@ def chart_image(points, w, h, color, text_color):
         return None
 
 
+# ====================================================================== succès
+def badge_list(app):
+    """[(id, icône, titre, description, progression 0..1, texte)] calculés sur la collection."""
+    st = collection_stats(app)
+    count, value = st["count"], st["value"]
+    consoles = len(st["consoles"])
+    out = []
+
+    def add(bid, icon, title, desc, cur, goal, fmt="%d / %d"):
+        out.append((bid, icon, title, desc, min(1.0, cur / float(goal)) if goal else 1.0,
+                    fmt % (min(cur, goal), goal)))
+    for n, icon, name in ((1, "🎮", "Premier jeu"), (10, "📦", "Petite étagère"),
+                          (50, "🗄", "Collectionneur"), (100, "🏛", "Centenaire"),
+                          (250, "🏰", "Musée"), (500, "👑", "Légende vivante")):
+        add("jeux%d" % n, icon, name, "Posséder %d jeu%s" % (n, "x" if n > 1 else ""), count, n)
+    for v, icon, name in ((100, "💶", "Bonne cote"), (500, "💰", "Joli magot"),
+                          (1000, "💎", "Trésor"), (5000, "🏦", "Coffre-fort")):
+        add("valeur%d" % v, icon, name, "Collection d'une valeur de %d €" % v, value, v,
+            "%d / %d €")
+    for n, icon, name in ((3, "🕹", "Multi-plateforme"), (8, "🌍", "Globe-trotteur"),
+                          (15, "🛸", "Archiviste")):
+        add("consoles%d" % n, icon, name, "Des jeux sur %d consoles" % n, consoles, n)
+    rar = st["rarity"]
+    add("rare", "🔷", "Rare !", "Posséder un jeu Rare ou mieux",
+        rar.get("Rare", 0) + rar.get("Très rare", 0) + rar.get("Légendaire", 0), 1)
+    add("legend", "🌟", "Pièce légendaire", "Posséder un jeu Légendaire (100 € et plus)",
+        rar.get("Légendaire", 0), 1)
+    best = max(((app.coll.count(l) / float(len(GAMES_BY[l])), l) for l in LABELS
+                if GAMES_BY[l]), default=(0, None))
+    for pct, icon, name in ((0.25, "🥉", "Bon début"), (0.5, "🥈", "À mi-chemin"),
+                            (1.0, "🥇", "Sélection complète")):
+        out.append(("sel%d" % int(pct * 100), icon, name,
+                    "%d %% de la sélection d'une console" % int(pct * 100),
+                    min(1.0, best[0] / pct), "%d %%%s" % (round(best[0] * 100),
+                                                          (" (%s)" % best[1]) if best[1] else "")))
+    add("souhait", "♥", "J'en rêve", "Ajouter un jeu à ta liste de souhaits",
+        len(app.coll.wish), 1)
+    add("gain", "📈", "Bon placement", "Tes jeux ont pris 10 € depuis leur ajout",
+        max(0, st["gain"]), 10, "%d / %d €")
+    return out
+
+
+def check_badges(app):
+    """Nouveaux succès débloqués (bulle de félicitations, une seule fois chacun)."""
+    seen = read_json(BADGES_FILE)
+    seen = set(seen) if isinstance(seen, list) else None
+    badges = badge_list(app)
+    done = set(b[0] for b in badges if b[4] >= 1.0)
+    if seen is None:                       # premier passage : pas de pluie de bulles
+        seen = set(done)
+        new = []
+    else:
+        new = [b for b in badges if b[4] >= 1.0 and b[0] not in seen]
+    if new or not os.path.exists(BADGES_FILE):
+        try:
+            write_json(BADGES_FILE, sorted(seen | done))
+        except OSError:
+            pass
+    if new:
+        b = new[0]
+        log("Succès débloqué : %s" % b[2])
+        hud("%s Succès débloqué : %s" % (b[1], b[2]), "success", 2.0)
+    return new
+
+
+@guard_class
+class BadgesScreen(Screen):
+    screen_title = "Succès"
+
+    def __init__(self, app, nav):
+        super().__init__()
+        self.app, self.nav = app, nav
+        self.background_color = app.theme["bg"]
+        self.scroll = ui.ScrollView()
+        self.scroll.indicator_style = app.theme["indicator"]
+        self.scroll.always_bounce_vertical = True
+        self.add_subview(self.scroll)
+
+    def layout(self):
+        self.scroll.frame = (0, 0, self.width, self.height)
+        self.build()
+
+    def build(self):
+        app, t, sv = self.app, self.app.theme, self.scroll
+        for v in list(sv.subviews):
+            sv.remove_subview(v)
+        w = self.width
+        if w < 50:
+            return
+        badges = badge_list(app)
+        badges.sort(key=lambda b: (b[4] < 1.0, -b[4]))
+        got = sum(1 for b in badges if b[4] >= 1.0)
+        pad = 12
+        sv.add_subview(make_label("%d / %d succès débloqués" % (got, len(badges)),
+                                  (pad, 10, w - 2 * pad, 26), 18, True, t["text"], "center"))
+        y = 46
+        cols = 2
+        bw = (w - pad * (cols + 1)) / cols
+        bh = 132
+        for i, (bid, icon, title, desc, prog, txt) in enumerate(badges):
+            x = pad + (i % cols) * (bw + pad)
+            yy = y + (i // cols) * (bh + pad)
+            done = prog >= 1.0
+            card = ui.View(frame=(x, yy, bw, bh), background_color=t["card"])
+            card.corner_radius = 16
+            if done:
+                card.add_subview(gradient_view((0, 0, bw, bh), "#ff9f0a", 16, 0.35, 0.0))
+                card.border_width = 1.5
+                card.border_color = "#ff9f0a"
+            ic = make_label(icon, (0, 10, bw, 40), 32, False, t["text"], "center")
+            ic.alpha = 1.0 if done else 0.3
+            card.add_subview(ic)
+            card.add_subview(make_label(title, (8, 54, bw - 16, 18), 14, True,
+                                        t["text"] if done else t["sub"], "center"))
+            card.add_subview(make_label(desc, (8, 72, bw - 16, 30), 10, False, t["sub"],
+                                        "center", 2))
+            track = ui.View(frame=(14, 106, bw - 28, 6), background_color=t["field"])
+            track.corner_radius = 3
+            fill = ui.View(frame=(0, 0, max(6, (bw - 28) * prog), 6),
+                           background_color="#ff9f0a" if done else t["accent"])
+            fill.corner_radius = 3
+            track.add_subview(fill)
+            card.add_subview(track)
+            card.add_subview(make_label("✓ Débloqué" if done else txt, (8, 114, bw - 16, 14),
+                                        10, True, "#ff9f0a" if done else t["sub"], "center"))
+            sv.add_subview(card)
+        rows = (len(badges) + cols - 1) // cols
+        sv.content_size = (w, y + rows * (bh + pad) + pad)
+
+
 # ====================================================================== statistiques
 def collection_stats(app):
     """Chiffres de la collection : valeur, plus-value, top, rareté, consoles."""
@@ -5058,6 +5194,11 @@ class StatsScreen(Screen):
         st = collection_stats(app)
         pad, cw = 16, w - 32
         y = pad
+        got = sum(1 for b in badge_list(app) if b[4] >= 1.0)
+        sv.add_subview(make_button("🏆  Succès : %d débloqués  ›" % got, (pad, y, cw, 40),
+                                   lambda s: self.nav.push(BadgesScreen(self.app, self.nav)),
+                                   t["card"], "#ff9f0a", 14))
+        y += 40 + 14
         # --- valeur et plus-value
         card = ui.View(frame=(pad, y, cw, 120), background_color=t["card"])
         card.corner_radius = 16
