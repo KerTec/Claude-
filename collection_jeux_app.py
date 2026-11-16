@@ -103,7 +103,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.58 (16/11/2026)"
+APP_VERSION = "3.59 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -3971,7 +3971,7 @@ class HomeScreen(Screen):
         self.app.price_history.record(self.app)
         if getattr(self, "wish_btn", None):
             self.wish_btn.title = self.wish_title()
-        value_lbl.text = "Valeur estimée : %s" % eur(value)
+        value_lbl.text = "Valeur estimée : %s%s" % (eur(value), self.app.history.trend(value))
         t = self.app.theme
         for label in list(getattr(self, "photo_refs", {})):
             iv, _ = self.photo_refs[label]
@@ -4060,8 +4060,9 @@ class HomeScreen(Screen):
         card.add_subview(make_label("Toutes consoles", (16, 12, w, 18), 13, False, t["sub"]))
         count_lbl = make_label("%d / %d jeux" % (owned, total), (16, 32, w, 30), 26, True,
                                t["text"])
-        value_lbl = make_label("Valeur estimée : %s" % eur(value), (16, 64, w, 20), 15, False,
-                               t["text"])
+        value_lbl = make_label("Valeur estimée : %s%s" % (eur(value),
+                                                         self.app.history.trend(value)),
+                               (16, 64, w, 20), 15, False, t["text"])
         card.add_subview(count_lbl)
         card.add_subview(value_lbl)
         cw = w - 2 * pad
@@ -4896,6 +4897,18 @@ class ValueHistory:
 
     def series(self):
         return sorted(self.days.items())
+
+    def trend(self, value):
+        """« ▲ +3 € (hier) » : écart avec le dernier jour noté avant aujourd'hui."""
+        today = time.strftime("%Y-%m-%d")
+        prev = [d for d in sorted(self.days) if d < today]
+        if not prev or value <= 0:
+            return ""
+        diff = value - self.days[prev[-1]]
+        if abs(diff) < 0.5:
+            return ""
+        return "   %s %s%s" % ("▲" if diff > 0 else "▼", "+" if diff > 0 else "-",
+                               eur_short(abs(diff)))
 
 
 class PriceHistory:
