@@ -87,7 +87,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.67 (16/11/2026)"
+APP_VERSION = "3.68 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -3071,6 +3071,7 @@ class App:
         started = time.time()
         stable = False
         last_loop = time.time()
+        was_bg = False
         while not self.closed:
             time.sleep(2)
             if self.closed:
@@ -3083,7 +3084,13 @@ class App:
                 # ce n'est pas un gel de l'interface, on repart de zéro.
                 self.heartbeat = now
                 reported = False
+                if self.in_background() and not was_bg:
+                    was_bg = True
+                    write_marker(started, bg=True)
                 continue
+            if was_bg:
+                was_bg = False
+                write_marker(started)
             beats = getattr(self, "_beats", 0) + 1
             self._beats = beats
             if beats % 5 == 1:               # toutes les 10 s : « l'app est toujours en vie »
@@ -3098,6 +3105,14 @@ class App:
                 continue
             frozen = time.time() - self.heartbeat
             if frozen > 6 and not reported:
+                # Pendant un défilement, iOS n'appelle plus update() : ce n'est pas un gel.
+                # Vrai gel = le fil de l'interface est occupé dans notre code Python.
+                ident = getattr(self, "ui_ident", None)
+                if ident is not None:
+                    busy = ident in sys._current_frames()
+                    time.sleep(0.3)
+                    if not (busy and ident in sys._current_frames()):
+                        continue
                 reported = True
                 stacks = []
                 names = {t.ident: t.name for t in threading.enumerate()}
@@ -3867,6 +3882,7 @@ class AppView(ui.View):
         self.app.heartbeat = time.time()
         if not self.app.first_beat:
             self.app.first_beat = self.app.heartbeat
+            self.app.ui_ident = threading.get_ident()
         self.ticks = getattr(self, "ticks", 0) + 1
         if self.ticks % 8 == 0 and ui_style() != self.app.theme["style"]:
             self.switch_theme(ui_style())   # l'iPhone est passé en mode nuit (ou jour)
@@ -7054,10 +7070,11 @@ def show_text(app, title, text):
 
 
 # ====================================================================== lancement
-def write_marker(started):
-    """Fichier « session en cours » : début et dernier signe de vie de l'app."""
+def write_marker(started, bg=False):
+    """Fichier « session en cours » : début, dernier signe de vie, et si l'app était en
+    arrière-plan (iOS ferme souvent une app en arrière-plan : ce n'est pas un plantage)."""
     try:
-        write_json(RUN_MARKER, {"start": started, "alive": time.time()})
+        write_json(RUN_MARKER, {"start": started, "alive": time.time(), "bg": bool(bg)})
     except OSError:
         pass
 
@@ -7097,6 +7114,9 @@ def main():
     install_crash_handlers()
     interrupted = os.path.exists(RUN_MARKER)
     previous = read_json(RUN_MARKER) if interrupted else None
+    closed_in_bg = bool(isinstance(previous, dict) and previous.get("bg"))
+    if closed_in_bg:
+        interrupted = False       # fermée par iOS en arrière-plan : pas un plantage
     poison = None
     if interrupted:
         try:
@@ -7106,7 +7126,7 @@ def main():
             pass
     # Plantage « tôt » = la session précédente a duré moins de 15 s
     # (signe de vie noté à 2 s, puis toutes les 10 s).
-    early = isinstance(previous, dict) and \
+    early = isinstance(previous, dict) and not closed_in_bg and \
         previous.get("alive", 0) - previous.get("start", 0) < 15
     starts = read_json(STARTS_FILE)
     count = (starts.get("early", 0) if isinstance(starts, dict) else 0) + 1 if early else 0
@@ -7116,6 +7136,8 @@ def main():
         pass
     write_marker(time.time())
     log("===== Démarrage version %s • %s =====" % (APP_VERSION, _device_info()))
+    if closed_in_bg:
+        log("La session précédente a été fermée par iOS en arrière-plan (normal)")
     if interrupted:
         log("La session précédente ne s'est pas fermée normalement "
             "(plantage, ou Pythonista fermé de force)%s"
