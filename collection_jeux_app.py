@@ -91,7 +91,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.40 (15/11/2026)"
+APP_VERSION = "3.41 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -3945,6 +3945,12 @@ class HomeScreen(Screen):
                                t["text"])
         card.add_subview(count_lbl)
         card.add_subview(value_lbl)
+        cw = w - 2 * pad
+        card.add_subview(make_label("Voir mes jeux ›", (cw - 140, 12, 124, 18), 13, True,
+                                    t["accent"], "right"))
+        mine = ui.Button(frame=(0, 0, cw, 88))
+        mine.action = lambda s: self.nav.push(MyGamesScreen(self.app, self.nav))
+        card.add_subview(mine)
         self.summary_refs = (count_lbl, value_lbl)
         self.card_refs = {}
         cw = w - 2 * pad
@@ -5146,6 +5152,149 @@ def scan_lookup(app, nav, code):
             hud("Ajouté aux souhaits", "success", 1.0)
         nav.push(DetailScreen(app, nav, label, game))
     on_main(act)
+
+
+# ====================================================================== mes jeux
+@guard_class
+class MyGamesScreen(Screen):
+    """Tous mes jeux, toutes consoles, avec jaquette, prix et variation."""
+    screen_title = "Mes jeux"
+    SORTS = ["Console", "Prix", "Récents", "A–Z"]
+    ROW = 66
+
+    def __init__(self, app, nav):
+        super().__init__()
+        self.app, self.nav = app, nav
+        t = app.theme
+        self.background_color = t["bg"]
+        self.sort = 0
+        self.ctrl = ui.SegmentedControl()
+        self.ctrl.segments = self.SORTS
+        self.ctrl.selected_index = 0
+        self.ctrl.action = self.sort_changed
+        self.add_subview(self.ctrl)
+        self.scroll = ui.ScrollView()
+        self.scroll.indicator_style = t["indicator"]
+        self.scroll.always_bounce_vertical = True
+        self.scroll.delegate = self
+        self.add_subview(self.scroll)
+        self.thumbs = []          # (y, ImageView, chemin) : jaquettes à afficher
+
+    def on_show(self):
+        self.build()
+
+    def on_data(self, label, game):
+        if not self.hidden:
+            self.later(self.build, 1.5)
+
+    def on_cover(self, url):
+        if not self.hidden and any(p is None for _, _, p in self.thumbs):
+            self.later(self.build, 1.5)
+
+    def sort_changed(self, sender):
+        self.sort = sender.selected_index
+        self.build()
+
+    def layout(self):
+        w, h = self.width, self.height
+        self.ctrl.frame = (10, 8, w - 20, 30)
+        self.scroll.frame = (0, 46, w, max(0, h - 46))
+        self.build()
+
+    def scrollview_did_scroll(self, sv):
+        self.load_thumbs()
+
+    def idle(self):
+        self.load_thumbs()
+
+    def load_thumbs(self):
+        """Jaquettes chargées seulement près de l'écran (mémoire)."""
+        if not self.thumbs:
+            return
+        top = self.scroll.content_offset[1] - 200
+        bottom = top + self.scroll.height + 400
+        done = 0
+        for item in self.thumbs:
+            y, iv, path = item
+            if path and top <= y <= bottom and getattr(iv, "image", None) is None and done < 6:
+                iv.image = load_image(path)
+                done += 1
+
+    def games(self):
+        app = self.app
+        out = []
+        for label in LABELS:
+            for g in app.coll.owned_games(label):
+                p = app.price(label, g)
+                rec = app.coll.added.get(key_of(label, g)) or {}
+                out.append((label, g, p["mid"] if p else None, rec.get("ts", 0)))
+        if self.sort == 1:
+            out.sort(key=lambda x: -(x[2] or 0))
+        elif self.sort == 2:
+            out.sort(key=lambda x: -x[3])
+        elif self.sort == 3:
+            out.sort(key=lambda x: normalize(x[1]))
+        return out
+
+    def build(self):
+        app, t, sv = self.app, self.app.theme, self.scroll
+        for v in list(sv.subviews):
+            sv.remove_subview(v)
+        self.thumbs = []
+        w = self.width
+        if w < 50:
+            return
+        pad, cw = 10, w - 20
+        y = 4
+        last_label = None
+        games = self.games()
+        if not games:
+            sv.add_subview(make_label("Aucun jeu pour l'instant.", (pad, 30, cw, 30), 15, False,
+                                      t["sub"], "center"))
+        for label, g, price, ts in games:
+            if self.sort == 0 and label != last_label:
+                last_label = label
+                n = len(app.coll.owned_games(label))
+                bar = ui.View(frame=(pad + 2, y + 10, 4, 16),
+                              background_color=family_color(label, t["accent"]))
+                bar.corner_radius = 2
+                sv.add_subview(bar)
+                sv.add_subview(make_label("%s  (%d)" % (FULL_NAME[label].upper(), n),
+                                          (pad + 14, y + 7, cw, 22), 12, True, t["sub"]))
+                y += 34
+            row = ui.View(frame=(pad, y, cw, self.ROW - 6), background_color=t["card"])
+            row.corner_radius = 12
+            ph = ui.View(frame=(8, 6, 38, self.ROW - 18),
+                         background_color=family_color(label, t["accent"]))
+            ph.corner_radius = 5
+            ph.alpha = 0.35
+            row.add_subview(ph)
+            iv = ui.ImageView(frame=(8, 6, 38, self.ROW - 18))
+            iv.content_mode = ui.CONTENT_SCALE_ASPECT_FIT
+            row.add_subview(iv)
+            url = app.cover_url(label, g)
+            path = app.covers.path(url) if url else None
+            self.thumbs.append((y, iv, path if path and CoverStore.has_file(path) else None))
+            row.add_subview(make_label(g, (56, 8, cw - 160, 20), 14, True, t["text"]))
+            sub = FULL_NAME[label] + "  •  " + app.coll.condition(label, g)
+            if self.sort == 2 and ts:
+                sub = "ajouté le %s  •  %s" % (time.strftime("%d/%m/%Y", time.localtime(ts)),
+                                               label)
+            row.add_subview(make_label(sub, (56, 30, cw - 160, 16), 11, False, t["sub"]))
+            row.add_subview(make_label(eur(price) if price else "…", (cw - 104, 8, 92, 20),
+                                       15, True, t["text"], "right"))
+            dtxt, dcol = delta_text(app.delta(label, g), short=True)
+            if dtxt and dtxt != "=":
+                row.add_subview(make_label(dtxt, (cw - 104, 30, 92, 16), 11, True, dcol,
+                                           "right"))
+            b = ui.Button(frame=(0, 0, cw, self.ROW - 6))
+            b.action = (lambda s, l=label, g=g:
+                        self.nav.push(DetailScreen(self.app, self.nav, l, g)))
+            row.add_subview(b)
+            sv.add_subview(row)
+            y += self.ROW
+        sv.content_size = (w, y + 10)
+        self.load_thumbs()
 
 
 # ====================================================================== recherche globale
