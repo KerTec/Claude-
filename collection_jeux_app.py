@@ -102,7 +102,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.52 (16/11/2026)"
+APP_VERSION = "3.53 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -127,7 +127,7 @@ PS2 = [
     ]),
     ("Ratchet & Clank", [
         "Ratchet & Clank", "Ratchet & Clank 2: Going Commando",
-        "Ratchet & Clank 3: Up Your Arsenal", "Ratchet: Gladiator"
+        "Ratchet: Gladiator"
     ]),
     ("Jak & Daxter", [
         "Jak and Daxter: The Precursor Legacy", "Jak II: Hors-la-loi",
@@ -1969,7 +1969,8 @@ def parse_search(page, slug):
                           % (v[3], AMOUNT), chunk)
             guide[cond] = _amount(p.group(1)) if p else None
         im = re.search(r'<img class="photo"[^>]*src="([^"]+)"', chunk)
-        results.append({"url": url.split("?")[0], "title": _clean_text(m.group(2)),
+        results.append({"url": htmllib.unescape(url.split("?")[0]),
+                        "title": _clean_text(m.group(2)),
                         "guide": guide, "img": cover_url(im.group(1)) if im else None})
     return results
 
@@ -2234,7 +2235,7 @@ def fetch_prices(label, game, fixed_url=None, known_url=None, full=False, token=
         return fetch_api(label, game, token)
     url = fixed_url or known_url
     if url:
-        return fetch_game_page(url)
+        return fetch_game_page(htmllib.unescape(url))   # « &amp; » : ancien format
     found = find_product(label, game)
     if not found:
         raise PriceError("introuvable sur PriceCharting (%s). Utilise « Corriger la fiche » "
@@ -2282,7 +2283,7 @@ def lookup_barcode(code):
         found = slug_label(url)
         if found:
             return {"label": found[0], "region": found[1], "title": _clean_text(m.group(2)),
-                    "url": url.split("?")[0]}
+                    "url": htmllib.unescape(url.split("?")[0])}
     raise PriceError("code-barres %s inconnu sur PriceCharting" % code)
 
 
