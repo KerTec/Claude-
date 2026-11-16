@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.72 (16/11/2026)"
+APP_VERSION = "3.73 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -6237,56 +6237,47 @@ class WishScreen(Screen):
 
 
 # ====================================================================== jeu de cartes
-# Jeu « incrémental » : on tape pour gagner des pièces, on ouvre des boosters, et chaque
-# carte rapporte des pièces en continu. Chaque jeu du catalogue est une carte ; sa rareté
-# vient de sa cote. Les cartes sont séparées de la vraie collection.
-PACK_SIZE = 5
+# Jeu « incrémental » : on tape pour gagner des pièces, on ouvre des boosters (à coups de
+# tapes), on revend ses doublons, et on achète des améliorations dans l'arbre. Chaque jeu
+# du catalogue est une carte ; sa rareté vient de sa cote. Aucun gain automatique.
 START_COINS = 0
-DAILY_COINS = 300
-FREE_EVERY = 3 * 3600                     # un booster gratuit toutes les 3 h
-OFFLINE_MAX = 4 * 3600                    # gains hors de l'écran : 4 h au plus, à 50 %
-SELL_VALUE = [5, 12, 30, 80, 250]         # revente d'un double, par rareté
-INCOME = [0.02, 0.06, 0.2, 0.8, 3.0]      # pièces par seconde rapportées par une carte
+SELL_VALUE = [3, 8, 25, 80, 300]          # revente d'un doublon, par rareté
 PACK_ALL = "Toutes consoles"
-# sorte de booster : (nom, prix, chances des 4 premières cartes, chances de la dernière)
+# sorte de booster : (nom, prix, chances des cartes, chances de la dernière, points de vie)
 PACK_KINDS = [
-    ("Classique", 100, [60, 27, 9, 3, 1], [0, 60, 28, 9, 3]),
-    ("Premium", 1500, [20, 45, 25, 8, 2], [0, 0, 70, 22, 8]),
-    ("Légende", 12000, [0, 30, 45, 18, 7], [0, 0, 0, 75, 25]),
+    ("Classique", 30, [60, 27, 9, 3, 1], [0, 60, 28, 9, 3], 8),
+    ("Premium", 600, [20, 45, 25, 8, 2], [0, 0, 70, 22, 8], 30),
+    ("Légende", 8000, [0, 30, 45, 18, 7], [0, 0, 0, 75, 25], 120),
 ]
-# variante d'une carte : (nom, signe, chance en %, multiplicateur de revenu, couleur)
+# variante d'une carte : (nom, signe, chance en %, multiplicateur de vente, couleur)
 VARIANTS = [
     ("Normale", "", 88, 1, None),
     ("Brillante", "✨", 8, 2, "#5ac8fa"),
     ("Holo", "🌈", 3, 5, "#ff2d55"),
     ("Or", "👑", 1, 20, "#ffd60a"),
 ]
-# amélioration : (clé, nom, description, prix de départ, hausse du prix, niveau maximum)
-UPGRADES = [
-    ("click", "Doigt musclé", "+1 pièce par tape", 50, 1.6, 200),
-    ("income", "Vitrine", "+25 % de revenu des cartes", 300, 1.8, 100),
-    ("luck", "Trèfle", "plus de cartes rares", 500, 2.2, 10),
-]
-
-
-# arbre de technologies : (clé, branche, rang, nom, effet, prix, prérequis)
+# arbre d'améliorations :
+# (clé, branche, rang, nom, effet par niveau, prix de départ, hausse, niveau max, prérequis)
 TECH = [
-    ("c1", 0, 0, "Double tape", "tapes ×2", 500, []),
-    ("c2", 0, 1, "Coup critique", "1 tape sur 10 vaut ×10", 2500, ["c1"]),
-    ("c3", 0, 2, "Tape en or", "chaque tape ajoute 1 s de revenu", 15000, ["c2"]),
-    ("c4", 0, 3, "Auto-tape", "2 tapes par seconde toutes seules", 60000, ["c3"]),
-    ("r1", 1, 0, "Étagère", "revenu des cartes ×1,5", 800, []),
-    ("r2", 1, 1, "Doubles utiles", "chaque double : +10 % du revenu de sa carte", 4000,
-     ["r1"]),
-    ("r3", 1, 2, "Nuit blanche", "hors de l'écran : revenu complet, 8 h", 20000, ["r2"]),
-    ("r4", 1, 3, "Musée", "revenu des cartes ×2", 100000, ["r3"]),
-    ("b1", 2, 0, "Sixième carte", "6 cartes par booster", 1500, []),
-    ("b2", 2, 1, "Bon vendeur", "les doubles se vendent ×3", 6000, ["b1"]),
-    ("b3", 2, 2, "Chasseur", "2 fois plus de variantes rares", 30000, ["b2"]),
-    ("b4", 2, 3, "Livraison rapide", "booster gratuit toutes les heures", 80000, ["b3"]),
-    ("m1", 1, 4, "Maître collectionneur", "tapes et revenu ×2", 500000, ["c4", "r4", "b4"]),
+    ("v1", 0, 0, "Doigt musclé", "+1 pièce par tape", 20, 1.18, 50, []),
+    ("v2", 0, 1, "Stockage", "+1 place de doublon", 40, 1.15, 50, ["v1"]),
+    ("v3", 0, 2, "Demande", "+1 doublon vendu par vente", 150, 1.4, 20, ["v2"]),
+    ("v4", 0, 3, "Valeur", "+50 % sur la vente des cartes", 300, 1.35, 30, ["v3"]),
+    ("v5", 0, 4, "Coup critique", "+3 % de tapes ×10", 2000, 2.0, 10, ["v4"]),
+    ("b1", 1, 0, "Dégâts", "+1 dégât par tape sur un booster", 60, 1.25, 30, []),
+    ("b2", 1, 1, "Cartes", "+1 carte par booster", 500, 3.0, 6, ["b1"]),
+    ("b3", 1, 2, "Booster Premium", "débloque le booster Premium", 5000, 1.0, 1, ["b2"]),
+    ("b4", 1, 3, "Remise", "boosters −4 %", 1500, 1.8, 10, ["b3"]),
+    ("b5", 1, 4, "Booster Légende", "débloque le booster Légende", 80000, 1.0, 1, ["b4"]),
+    ("c1", 2, 0, "Trèfle", "plus de cartes rares", 400, 2.0, 10, []),
+    ("c2", 2, 1, "Chasseur", "+20 % de variantes rares", 1200, 2.0, 10, ["c1"]),
+    ("c3", 2, 2, "Livraison", "booster gratuit 20 min plus tôt", 2500, 2.0, 6, ["c2"]),
+    ("c4", 2, 3, "Bonus du jour", "+200 pièces de bonus", 800, 1.4, 20, ["c3"]),
+    ("m1", 1, 5, "Maître collectionneur", "tapes et ventes ×2", 500000, 1.0, 1,
+     ["v5", "b5", "c4"]),
 ]
-TECH_BRANCHES = [("Tapes", "#8e44ad"), ("Cartes", "#34c759"), ("Boosters", "#ff9f0a")]
+TECH_BY = {t[0]: t for t in TECH}
+TECH_BRANCHES = [("Vente", "#34c759"), ("Boosters", "#ff9f0a"), ("Chance", "#8e44ad")]
 
 
 def big(n):
@@ -6299,7 +6290,7 @@ def big(n):
 
 
 class CardBox:
-    """Mes cartes, mes pièces et mes améliorations (Documents/cartes_jeux.json)."""
+    """Une partie : mes cartes, mes pièces et mes améliorations."""
 
     def __init__(self, slot=1):
         self.slot = slot
@@ -6311,38 +6302,35 @@ class CardBox:
             v = raw.get(key)
             ok = isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0
             return kind(v) if ok else default
-        cards = raw.get("cards")
-        self.cards = {k: int(v) for k, v in cards.items()
-                      if isinstance(k, str) and isinstance(v, int) and v > 0} \
-            if isinstance(cards, dict) else {}
-        var = raw.get("var")
-        self.var = {k: int(v) for k, v in var.items()
-                    if isinstance(k, str) and isinstance(v, int) and 0 < v < len(VARIANTS)} \
-            if isinstance(var, dict) else {}
-        up = raw.get("up")
-        self.up = {k: int(v) for k, v in up.items()
-                   if isinstance(k, str) and isinstance(v, int) and v > 0} \
-            if isinstance(up, dict) else {}
-        tech = raw.get("tech")
-        self.tech = set(x for x in tech if isinstance(x, str)) if isinstance(tech, list) \
-            else set()
+
+        def levels(key, top=None):
+            d = raw.get(key)
+            return {k: int(v) for k, v in d.items()
+                    if isinstance(k, str) and isinstance(v, int) and v > 0
+                    and (top is None or v < top)} if isinstance(d, dict) else {}
+        self.cards = levels("cards")
+        self.var = levels("var", len(VARIANTS))
+        self.lv = {k: min(v, TECH_BY[k][7]) for k, v in levels("lv").items() if k in TECH_BY}
+        old = levels("up")                  # anciennes versions du jeu
+        if old and not self.lv:
+            for a, b in (("click", "v1"), ("luck", "c1")):
+                if old.get(a):
+                    self.lv[b] = min(old[a], TECH_BY[b][7])
         self.coins = num("coins", float(START_COINS))
         self.daily = raw.get("daily") if isinstance(raw.get("daily"), str) else ""
         self.free = num("free", 0.0)
         self.opened = num("opened", 0, int)
         self.taps = num("taps", 0, int)
-        self.ts = num("ts", 0.0)            # dernier calcul du revenu des cartes
-        self.rate = 0.0                     # pièces par seconde (recalculé)
+        self.sold = num("sold", 0, int)
         self.last_save = 0.0
 
     def save(self):
         self.last_save = time.time()
         try:
             write_json(self.path, {"coins": round(self.coins, 2), "cards": self.cards,
-                                    "var": self.var, "up": self.up, "daily": self.daily,
-                                    "tech": sorted(self.tech),
-                                    "free": self.free, "opened": self.opened,
-                                    "taps": self.taps, "ts": self.ts})
+                                   "var": self.var, "lv": self.lv, "daily": self.daily,
+                                   "free": self.free, "opened": self.opened,
+                                   "taps": self.taps, "sold": self.sold})
         except OSError as e:
             log("Sauvegarde des cartes impossible : %s" % e, "ERREUR")
 
@@ -6353,86 +6341,67 @@ class CardBox:
     def count(self, label, game):
         return self.cards.get(key_of(label, game), 0)
 
-    def variant(self, label, game):
-        return self.var.get(key_of(label, game), 0)
-
+    # ------------------------------------------------ améliorations
     def level(self, key):
-        return self.up.get(key, 0)
+        return self.lv.get(key, 0)
 
-    def has(self, key):
-        return key in self.tech
+    def cost(self, key):
+        t = TECH_BY[key]
+        return int(t[5] * t[6] ** self.level(key))
 
-    def tech_state(self, key):
-        """« acquis », « possible » (prérequis remplis) ou « bloqué »."""
-        if key in self.tech:
-            return "acquis"
-        need = [t[6] for t in TECH if t[0] == key][0]
-        return "possible" if all(n in self.tech for n in need) else "bloqué"
+    def state(self, key):
+        """« max », « possible » (prérequis remplis) ou « bloqué »."""
+        t = TECH_BY[key]
+        if self.level(key) >= t[7]:
+            return "max"
+        return "possible" if all(self.level(n) > 0 for n in t[8]) else "bloqué"
 
-    def buy_tech(self, key):
-        cost = [t[5] for t in TECH if t[0] == key][0]
-        if self.tech_state(key) != "possible" or self.coins < cost:
+    def buy(self, key):
+        cost = self.cost(key)
+        if self.state(key) != "possible" or self.coins < cost:
             return False
         self.coins -= cost
-        self.tech.add(key)
+        self.lv[key] = self.level(key) + 1
         self.save()
         return True
+
+    def master(self):
+        return 2 if self.level("m1") else 1
 
     def click_power(self):
-        power = (1 + self.level("click")) * (2 if self.has("c1") else 1) * \
-            (2 if self.has("m1") else 1)
-        if self.has("c3"):
-            power += self.rate
-        return power
+        return (1 + self.level("v1")) * self.master()
+
+    def crit_chance(self):
+        return 0.03 * self.level("v5")
+
+    def capacity(self):
+        return 3 + self.level("v2")
+
+    def demand(self):
+        return 1 + self.level("v3")
+
+    def value_mult(self):
+        return (1 + 0.5 * self.level("v4")) * self.master()
+
+    def damage(self):
+        return 1 + self.level("b1")
 
     def pack_size(self):
-        return PACK_SIZE + (1 if self.has("b1") else 0)
+        return 3 + self.level("b2")
 
-    def upgrade_cost(self, key):
-        for k, _, _, base, grow, _ in UPGRADES:
-            if k == key:
-                return int(base * grow ** self.level(key))
-        return 0
+    def unlocked(self, kind):
+        return kind == 0 or bool(self.level("b3" if kind == 1 else "b5"))
 
-    def buy_upgrade(self, key):
-        top = [u[5] for u in UPGRADES if u[0] == key][0]
-        cost = self.upgrade_cost(key)
-        if self.level(key) >= top or self.coins < cost:
-            return False
-        self.coins -= cost
-        self.up[key] = self.level(key) + 1
-        self.save()
-        return True
+    def price(self, kind):
+        return max(1, int(PACK_KINDS[kind][1] * (1 - 0.04 * self.level("b4"))))
 
-    def compute_rate(self, app):
-        """Revenu de toutes mes cartes, en pièces par seconde."""
-        total = 0.0
-        for key in self.cards:
-            label, _, g = key.partition("|")
-            one = INCOME[card_tier(app, label, g)] * VARIANTS[self.var.get(key, 0)][3]
-            if self.has("r2"):                      # doubles utiles (10 au plus par carte)
-                one *= 1 + 0.1 * min(10, self.cards[key] - 1)
-            total += one
-        mult = (1.5 if self.has("r1") else 1) * (2 if self.has("r4") else 1) * \
-            (2 if self.has("m1") else 1)
-        self.rate = total * (1 + 0.25 * self.level("income")) * mult
-        return self.rate
+    def daily_bonus(self):
+        return 300 + 200 * self.level("c4")
 
-    def earn(self, offline=False):
-        """Ajoute le revenu des cartes depuis le dernier passage ; renvoie le gain."""
-        now = time.time()
-        dt = now - self.ts if self.ts else 0.0
-        self.ts = now
-        if dt <= 0 or not self.rate:
-            return 0.0
-        if offline:
-            night = self.has("r3")
-            gain = self.rate * min(dt, OFFLINE_MAX * (2 if night else 1)) * \
-                (1.0 if night else 0.5)
-        else:
-            gain = self.rate * min(dt, 5.0)
-        self.coins += gain
-        return gain
+    def free_wait(self):
+        """Secondes avant le prochain booster gratuit (0 = disponible)."""
+        every = (180 - 20 * self.level("c3")) * 60
+        return max(0, int(self.free + every - time.time()))
 
     def daily_ready(self):
         return self.daily != time.strftime("%Y-%m-%d")
@@ -6441,33 +6410,56 @@ class CardBox:
         if not self.daily_ready():
             return 0
         self.daily = time.strftime("%Y-%m-%d")
-        bonus = DAILY_COINS + int(self.rate * 600)       # + 10 min de revenu
+        bonus = self.daily_bonus()
         self.coins += bonus
         self.save()
         return bonus
 
-    def free_wait(self):
-        """Secondes avant le prochain booster gratuit (0 = disponible)."""
-        every = 3600 if self.has("b4") else FREE_EVERY
-        return max(0, int(self.free + every - time.time()))
+    # ------------------------------------------------ cartes et doublons
+    def doubles(self):
+        return sum(c - 1 for c in self.cards.values() if c > 1)
 
-    def doubles_value(self, app):
-        total = n = 0
-        for key, c in self.cards.items():
-            if c > 1:
-                label, _, g = key.partition("|")
-                total += (c - 1) * SELL_VALUE[card_tier(app, label, g)] * \
-                    (3 if self.has("b2") else 1)
-                n += c - 1
-        return n, total
+    def add_card(self, label, game, var):
+        """Range une carte tirée. Renvoie « nouveau », « mieux » (meilleure variante),
+        « doublon » ou « perdu » (stock de doublons plein)."""
+        key = key_of(label, game)
+        if key not in self.cards:
+            self.cards[key] = 1
+            if var:
+                self.var[key] = var
+            return "nouveau"
+        if var > self.var.get(key, 0):
+            self.var[key] = var
+            return "mieux"
+        if self.doubles() >= self.capacity():
+            return "perdu"
+        self.cards[key] += 1
+        return "doublon"
 
-    def sell_doubles(self, app):
-        n, total = self.doubles_value(app)
-        for key in list(self.cards):
-            if self.cards[key] > 1:
-                self.cards[key] = 1
+    def card_value(self, app, key):
+        label, _, g = key.partition("|")
+        return SELL_VALUE[card_tier(app, label, g)] * VARIANTS[self.var.get(key, 0)][3] * \
+            self.value_mult()
+
+    def stock_value(self, app):
+        return sum((c - 1) * self.card_value(app, k) for k, c in self.cards.items() if c > 1)
+
+    def sell(self, app):
+        """Vend « demande » doublons, les plus chers d'abord. Renvoie (nombre, pièces)."""
+        stock = sorted(((self.card_value(app, k), k) for k, c in self.cards.items() if c > 1),
+                       reverse=True)
+        n, total = 0, 0.0
+        left = self.demand()
+        for value, key in stock:
+            while left and self.cards[key] > 1:
+                self.cards[key] -= 1
+                total += value
+                n += 1
+                left -= 1
+            if not left:
+                break
         self.coins += total
-        self.save()
+        self.sold += n
         return n, total
 
 
@@ -6492,10 +6484,10 @@ def pack_pool(app, family):
     return pool
 
 
-def draw_pack(app, family, kind=0, luck=0, rng=random, size=PACK_SIZE, hunter=False):
+def draw_pack(app, family, kind=0, luck=0, rng=random, size=3, hunter=0):
     """Les cartes d'un booster : [(console, jeu, rareté, variante)]."""
     pool = pack_pool(app, family)
-    _, _, odds, odds_last = PACK_KINDS[kind]
+    odds, odds_last = PACK_KINDS[kind][2], PACK_KINDS[kind][3]
     out = []
     for i in range(size):
         base = odds_last if i == size - 1 else odds
@@ -6509,13 +6501,13 @@ def draw_pack(app, family, kind=0, luck=0, rng=random, size=PACK_SIZE, hunter=Fa
             continue
         label, g = rng.choice(pool[tier])
         var = rng.choices(range(len(VARIANTS)),
-                          weights=[v[2] * (1 + 0.1 * luck * j) * (2 if hunter and j else 1)
+                          weights=[v[2] * (1 + 0.2 * hunter if j else 1)
                                    for j, v in enumerate(VARIANTS)])[0]
         out.append((label, g, tier, var))
     return out
 
 
-def make_card(app, label, game, w, h, count=0, new=False, var=0):
+def make_card(app, label, game, w, h, count=0, tag=None, var=0):
     """Vue d'une carte : jaquette, nom, console, rareté. Renvoie (vue, image, adresse)."""
     t = app.theme
     tier = card_tier(app, label, game)
@@ -6551,8 +6543,9 @@ def make_card(app, label, game, w, h, count=0, new=False, var=0):
         pill, _ = make_pill("%s %s" % (vsign, vname), (4, ih - 18, w - 8, 16), 9, vcolor,
                             "black", radius=5)
         card.add_subview(pill)
-    if new:
-        pill, _ = make_pill("NOUVEAU", (4, 4, 58, 16), 9, "#ff2d55", radius=5)
+    if tag:
+        pill, _ = make_pill(tag[0], (4, 4, min(w - 8, 9 + 6.2 * len(tag[0])), 16), 9, tag[1],
+                            "black" if tag[1] == "#ffd60a" else "white", radius=5)
         card.add_subview(pill)
     elif count > 1:
         pill, _ = make_pill("×%d" % count, (w - 34, 4, 30, 16), 10, (0, 0, 0, 0.75), radius=5)
@@ -6651,7 +6644,8 @@ def slot_info(slot):
     if not isinstance(d, dict):
         return None
     cards = d.get("cards") if isinstance(d.get("cards"), dict) else {}
-    tech = d.get("tech") if isinstance(d.get("tech"), list) else []
+    lv = d.get("lv") if isinstance(d.get("lv"), dict) else {}
+    tech = [1] * sum(v for v in lv.values() if isinstance(v, int))
     coins = d.get("coins") if isinstance(d.get("coins"), (int, float)) else 0
     opened = d.get("opened") if isinstance(d.get("opened"), int) else 0
     if not cards and not tech and not opened and coins < 1 and not d.get("taps"):
@@ -6667,7 +6661,7 @@ def slot_text(slot):
     info = slot_info(slot)
     if not info:
         return "vide"
-    return "🪙 %s  •  %d cartes  •  %s  •  %d techno." % (
+    return "🪙 %s  •  %d cartes  •  %s  •  %d amélior." % (
         big(info[0]), info[1], plural(info[2], "booster"), info[3])
 
 
@@ -6680,7 +6674,6 @@ def use_slot(app, slot, new=False):
         except OSError:
             pass
     app.cards = CardBox(slot)
-    app.cards.ts = time.time() if new else app.cards.ts
     app.cards.save()
     try:
         write_json(CARDS_ACTIVE, {"slot": slot})
@@ -6811,7 +6804,7 @@ class GameMenuScreen(Screen):
 
 @guard_class
 class CardsScreen(Screen):
-    """Le jeu : on tape pour des pièces, on achète des boosters et des améliorations."""
+    """Le jeu : on tape pour des pièces, on vend ses doublons, on achète des boosters."""
     screen_title = "Boosters"
 
     def __init__(self, app, nav):
@@ -6823,19 +6816,14 @@ class CardsScreen(Screen):
         self.scroll.indicator_style = app.theme["indicator"]
         self.scroll.always_bounce_vertical = True
         self.add_subview(self.scroll)
-        self.free_btn = self.coin_lbl = self.rate_lbl = self.tap_btn = None
+        self.free_btn = self.coin_lbl = self.tap_btn = self.sell_btn = self.stock_lbl = None
         self.kind = 0
         self.floats = []
         self.ticks = 0
         self.afford = None
 
     def on_show(self):
-        box = self.app.cards
-        box.compute_rate(self.app)
-        gain = box.earn(offline=True)
-        if gain >= 1:
-            hud("Tes cartes ont rapporté +%s pièces" % big(gain), "success", 1.5)
-        box.save()
+        self.app.cards.save()
         self.build()
 
     def on_hide(self):
@@ -6846,33 +6834,29 @@ class CardsScreen(Screen):
         self.build()
 
     def idle(self):
-        """4 fois par seconde : revenu des cartes, compteur de pièces, minuteur."""
-        box = self.app.cards
-        box.earn()
-        if box.has("c4"):                     # auto-tape : 2 tapes par seconde
-            box.coins += box.click_power() * 0.5
+        """4 fois par seconde : minuteur du booster gratuit, boutons à jour."""
         self.ticks += 1
-        self.show_coins()
         if self.free_btn is not None and self.ticks % 4 == 0:
             self.free_btn.title = self.free_title()
         if self.ticks % 8 == 0:
-            box.save_soon()
+            self.app.cards.save_soon()
             if self.afford != self.afford_sig():     # un achat devient possible
                 self.build()
 
-    def afford_sig(self):
-        box = self.app.cards
-        return tuple(box.coins >= box.upgrade_cost(u[0]) for u in UPGRADES) + \
-            tuple(box.coins >= k[1] for k in PACK_KINDS) + (self.tech_ready(),)
-
     def tech_ready(self):
         box = self.app.cards
-        return sum(1 for t in TECH if box.tech_state(t[0]) == "possible"
-                   and box.coins >= t[5])
+        return sum(1 for t in TECH if box.state(t[0]) == "possible"
+                   and box.coins >= box.cost(t[0]))
+
+    def afford_sig(self):
+        box = self.app.cards
+        return tuple(box.coins >= box.price(k) for k in range(len(PACK_KINDS))) + \
+            (self.tech_ready(),)
 
     def show_coins(self):
+        box = self.app.cards
         if self.coin_lbl is not None:
-            self.coin_lbl.text = "🪙 %s" % big(self.app.cards.coins)
+            self.coin_lbl.text = "🪙 %s" % big(box.coins)
 
     def free_title(self):
         wait = self.app.cards.free_wait()
@@ -6880,10 +6864,19 @@ class CardsScreen(Screen):
             return "🎁  Booster gratuit disponible !"
         return "Prochain booster gratuit dans %d h %02d min" % (wait // 3600, wait % 3600 // 60)
 
+    def floating(self, btn, text, color, size=18):
+        now = time.time()                     # quelques textes à la fois, pas des dizaines
+        self.floats = [x for x in self.floats if now - x < 0.7]
+        if btn is not None and len(self.floats) < 6:
+            self.floats.append(now)
+            f = btn.frame
+            float_text(self.scroll, text, f[0] + f[2] / 2 + random.randint(-50, 50), f[1] + 6,
+                       color, size)
+
     def tap(self):
         box = self.app.cards
         power = box.click_power()
-        crit = box.has("c2") and random.random() < 0.1
+        crit = random.random() < box.crit_chance()
         if crit:
             power *= 10
         box.coins += power
@@ -6891,16 +6884,35 @@ class CardsScreen(Screen):
         self.show_coins()
         if self.tap_btn is not None:
             pulse(self.tap_btn, 1.08, 0.12)
-            now = time.time()                 # quelques « +1 » à la fois, pas des dizaines
-            self.floats = [x for x in self.floats if now - x < 0.7]
-            if len(self.floats) < 6:
-                self.floats.append(now)
-                f = self.tap_btn.frame
-                float_text(self.scroll, ("CRITIQUE +%s" if crit else "+%s") % big(power),
-                           f[0] + f[2] / 2 + random.randint(-50, 50), f[1] + 6,
-                           "#ff453a" if crit else "#ffd60a", 22 if crit else 18)
+        self.floating(self.tap_btn, ("CRITIQUE +%s" if crit else "+%s") % big(power),
+                      "#ff453a" if crit else "#ffd60a", 22 if crit else 18)
         if box.taps % 25 == 0:
             haptic(0)
+
+    def sell(self):
+        box = self.app.cards
+        n, total = box.sell(self.app)
+        if not n:
+            hud("Aucun doublon à vendre : ouvre des boosters", "error", 1.0)
+            return
+        haptic(0)
+        self.show_coins()
+        self.show_stock()
+        if self.sell_btn is not None:
+            pulse(self.sell_btn, 1.06, 0.12)
+        self.floating(self.sell_btn, "+%s" % big(total), UP, 20)
+
+    def show_stock(self):
+        box = self.app.cards
+        d = box.doubles()
+        if self.stock_lbl is not None:
+            self.stock_lbl.text = "Doublons en stock : %d / %d%s" % (
+                d, box.capacity(), "  (PLEIN)" if d >= box.capacity() else "")
+            self.stock_lbl.text_color = DOWN if d >= box.capacity() else self.app.theme["sub"]
+        if self.sell_btn is not None:
+            self.sell_btn.title = "💰  Vendre %d doublon%s  (stock : %s)" % (
+                min(d, box.demand()), "s" if min(d, box.demand()) > 1 else "",
+                big(box.stock_value(self.app))) if d else "💰  Aucun doublon à vendre"
 
     def claim(self):
         bonus = self.app.cards.claim_daily()
@@ -6910,15 +6922,6 @@ class CardsScreen(Screen):
             log("Cartes : bonus du jour")
         self.build()
 
-    def buy(self, key):
-        if self.app.cards.buy_upgrade(key):
-            haptic()
-            self.app.cards.compute_rate(self.app)
-            log("Cartes : amélioration %s niveau %d" % (key, self.app.cards.level(key)))
-            self.build()
-        else:
-            hud("Pas assez de pièces", "error", 0.8)
-
     def set_kind(self, sender):
         self.kind = sender.selected_index
         self.build()
@@ -6926,33 +6929,28 @@ class CardsScreen(Screen):
     def open_pack(self, family, free=False):
         box = self.app.cards
         kind = 0 if free else self.kind
-        cost = PACK_KINDS[kind][1]
+        cost = box.price(kind)
         if free:
             if box.free_wait():
                 return
             box.free = time.time()
+        elif not box.unlocked(kind):
+            hud("Débloque ce booster dans l'arbre d'améliorations", "error", 1.4)
+            return
         elif box.coins < cost:
             hud("Pas assez de pièces (%s)" % big(cost), "error", 1.2)
             return
         else:
             box.coins -= cost
-        pack = draw_pack(self.app, family, kind, box.level("luck"), size=box.pack_size(),
-                         hunter=box.has("b3"))
-        fresh = []
-        for label, g, _, var in pack:
-            key = key_of(label, g)
-            better = var > box.var.get(key, 0)
-            fresh.append(key not in box.cards or better)
-            box.cards[key] = box.cards.get(key, 0) + 1
-            if better:
-                box.var[key] = var
+        pack = draw_pack(self.app, family, kind, box.level("c1"), size=box.pack_size(),
+                         hunter=box.level("c2"))
+        status = [box.add_card(label, g, var) for label, g, _, var in pack]
         box.opened += 1
-        box.compute_rate(self.app)
         box.save()                      # enregistré avant l'animation : rien n'est perdu
         log("Cartes : booster %s %s%s -> %s" % (PACK_KINDS[kind][0], family,
                                                " (gratuit)" if free else "",
                                                ", ".join(g for _, g, _, _ in pack)))
-        self.nav.push(PackScreen(self.app, self.nav, family, pack, fresh, kind))
+        self.nav.push(PackScreen(self.app, self.nav, family, pack, status, kind))
 
     def build(self):
         app, t, sv = self.app, self.app.theme, self.scroll
@@ -6966,7 +6964,7 @@ class CardsScreen(Screen):
         self.afford = self.afford_sig()
         pad, cw = 14, w - 28
         y = pad
-        # --- pièces et bouton à taper
+        # --- pièces
         head = ui.View(frame=(pad, y, cw, 78), background_color=t["card"])
         head.corner_radius = 16
         head.add_subview(gradient_view((0, 0, cw, 78), "#ff9f0a", 16, 0.4))
@@ -6974,22 +6972,40 @@ class CardsScreen(Screen):
                                    t["text"])
         head.add_subview(self.coin_lbl)
         total = sum(len(GAMES_BY[l]) for l in LABELS)
-        self.rate_lbl = make_label("+%s / s  •  %d / %d cartes  •  %s" % (
-            ("%.1f" % box.rate).replace(".", ","), len(box.cards), total,
-            plural(box.opened, "booster")), (16, 46, cw - 32, 18), 13, False, t["sub"])
-        head.add_subview(self.rate_lbl)
+        head.add_subview(make_label("%d / %d cartes  •  %s ouvert%s" % (
+            len(box.cards), total, plural(box.opened, "booster"),
+            "s" if box.opened > 1 else ""), (16, 46, cw - 32, 18), 13, False, t["sub"]))
         sv.add_subview(head)
         y += 78 + 12
+        # --- taper et vendre
         self.tap_btn = make_button("🎮  Tape ici !  +%s" % big(box.click_power()),
-                                   (pad + 30, y, cw - 60, 110), lambda s: self.tap(),
+                                   (pad + 20, y, cw - 40, 96), lambda s: self.tap(),
                                    "#8e44ad", "white", 22)
-        self.tap_btn.corner_radius = 28
+        self.tap_btn.corner_radius = 26
         sv.add_subview(self.tap_btn)
-        y += 110 + 14
+        y += 96 + 12
+        self.sell_btn = make_button("", (pad + 20, y, cw - 40, 56), lambda s: self.sell(),
+                                    "#34c759", "white", 15)
+        self.sell_btn.corner_radius = 18
+        sv.add_subview(self.sell_btn)
+        y += 56 + 6
+        self.stock_lbl = make_label("", (pad, y, cw, 16), 12, True, t["sub"], "center")
+        sv.add_subview(self.stock_lbl)
+        self.show_stock()
+        y += 16 + 14
+        # --- arbre d'améliorations
+        ready = self.tech_ready()
+        done = sum(box.lv.values())
+        sv.add_subview(make_button(
+            "🌳  Améliorations  (%d niveaux)%s" % (
+                done, "  •  %d à acheter !" % ready if ready else ""),
+            (pad, y, cw, 46), lambda s: self.nav.push(TechScreen(self.app, self.nav)),
+            "#ff9f0a" if ready else t["card"], "white" if ready else t["accent"], 14))
+        y += 46 + 10
         if box.daily_ready():
             sv.add_subview(make_button("☀️  Bonus du jour : +%s pièces" % big(
-                DAILY_COINS + int(box.rate * 600)), (pad, y, cw, 42), lambda s: self.claim(),
-                "#34c759", "white", 15))
+                box.daily_bonus()), (pad, y, cw, 42), lambda s: self.claim(), "#0a84ff",
+                "white", 15))
             y += 42 + 10
         ready = not box.free_wait()
         self.free_btn = make_button(self.free_title(), (pad, y, cw, 42),
@@ -6999,17 +7015,19 @@ class CardsScreen(Screen):
         sv.add_subview(self.free_btn)
         y += 42 + 18
         # --- boosters
-        sv.add_subview(make_label("BOOSTERS  (%d cartes)" % box.pack_size(), (pad + 2, y, cw, 18), 13,
-                                  True, t["sub"]))
+        sv.add_subview(make_label("BOOSTERS  (%s, %d dégât%s par tape)" % (
+            plural(box.pack_size(), "carte"), box.damage(), "s" if box.damage() > 1 else ""),
+            (pad + 2, y, cw, 18), 13, True, t["sub"]))
         y += 24
         seg = ui.SegmentedControl(frame=(pad, y, cw, 32))
-        seg.segments = ["%s %s" % (k[0], big(k[1])) for k in PACK_KINDS]
+        seg.segments = ["%s%s %s" % ("" if box.unlocked(k) else "🔒 ", PACK_KINDS[k][0],
+                                     big(box.price(k))) for k in range(len(PACK_KINDS))]
         seg.selected_index = self.kind
         seg.action = self.set_kind
         sv.add_subview(seg)
         y += 42
-        cost = PACK_KINDS[self.kind][1]
-        can = box.coins >= cost
+        cost = box.price(self.kind)
+        can = box.coins >= cost and box.unlocked(self.kind)
         families = [f for f, _ in FAMILIES] + [PACK_ALL]
         cols = 2
         bw = (cw - 12) / cols
@@ -7031,7 +7049,8 @@ class CardsScreen(Screen):
             tot = sum(len(GAMES_BY[l]) for l in labels)
             pack.add_subview(make_label("%d / %d cartes" % (got, tot), (0, 82, bw, 16), 12,
                                         False, (1, 1, 1, 0.9), "center"))
-            price, _ = make_pill("🪙 %s" % big(cost), (bw / 2 - 46, 102, 92, 22), 12,
+            price, _ = make_pill(("🪙 %s" % big(cost)) if box.unlocked(self.kind) else
+                                 "🔒 à débloquer", (bw / 2 - 56, 102, 112, 22), 12,
                                  (0, 0, 0, 0.35))
             pack.add_subview(price)
             b = ui.Button(frame=(0, 0, bw, bh))
@@ -7040,42 +7059,12 @@ class CardsScreen(Screen):
             sv.add_subview(pack)
         rows = (len(families) + cols - 1) // cols
         y += rows * (bh + 12) + 10
-        # --- arbre de technologies
-        ready = self.tech_ready()
-        sv.add_subview(make_button(
-            "🌳  Arbre de technologies  (%d / %d)%s" % (
-                len(box.tech), len(TECH), "  •  %d à acheter !" % ready if ready else ""),
-            (pad, y, cw, 46), lambda s: self.nav.push(TechScreen(self.app, self.nav)),
-            "#34c759" if ready else t["card"], "white" if ready else t["accent"], 14))
-        y += 46 + 16
-        # --- améliorations
-        sv.add_subview(make_label("AMÉLIORATIONS", (pad + 2, y, cw, 18), 13, True, t["sub"]))
-        y += 24
-        for key, name, desc, _, _, top in UPGRADES:
-            lvl = box.level(key)
-            cost = box.upgrade_cost(key)
-            row = ui.View(frame=(pad, y, cw, 54), background_color=t["card"])
-            row.corner_radius = 12
-            row.add_subview(make_label("%s  (niv. %d)" % (name, lvl), (12, 8, cw - 130, 18), 14,
-                                       True, t["text"]))
-            row.add_subview(make_label(desc, (12, 28, cw - 130, 16), 11, False, t["sub"]))
-            if lvl >= top:
-                row.add_subview(make_label("MAX", (cw - 112, 0, 100, 54), 14, True, t["owned"],
-                                           "right"))
-            else:
-                ok = box.coins >= cost
-                row.add_subview(make_button("🪙 %s" % big(cost), (cw - 112, 10, 100, 34),
-                                            lambda s, k=key: self.buy(k),
-                                            "#34c759" if ok else t["field"],
-                                            "white" if ok else t["sub"], 13))
-            sv.add_subview(row)
-            y += 60
         o = PACK_KINDS[self.kind][2]
         sv.add_subview(make_label(
-            "Chances du booster %s : %s. La dernière carte est toujours meilleure. Variantes "
-            "rares : Brillante ×2, Holo ×5, Or ×20 de revenu. Tes cartes rapportent des pièces "
-            "en continu (à moitié quand tu n'es pas sur cet écran, 4 h au plus). Jamais "
-            "d'argent réel." % (PACK_KINDS[self.kind][0], "  •  ".join(
+            "Chances du booster %s : %s. La dernière carte est toujours meilleure. Les pièces "
+            "se gagnent en tapant et en vendant tes doublons : si ton stock est plein, les "
+            "doublons en trop sont perdus. Une carte Brillante, Holo ou Or vend ses doublons "
+            "×2, ×5 ou ×20. Jamais d'argent réel." % (PACK_KINDS[self.kind][0], "  •  ".join(
                 "%s %d %%" % (RARITY[i][1], o[i]) for i in range(5) if o[i])),
             (pad, y + 4, cw, 92), 11, False, t["sub"], "center", 6))
         y += 104
@@ -7084,8 +7073,8 @@ class CardsScreen(Screen):
 
 @guard_class
 class TechScreen(Screen):
-    """Arbre de technologies : 3 branches qui se rejoignent, achats définitifs."""
-    screen_title = "Technologies"
+    """Arbre d'améliorations : 3 branches à plusieurs niveaux, qui se rejoignent."""
+    screen_title = "Améliorations"
 
     def __init__(self, app, nav):
         super().__init__()
@@ -7095,9 +7084,7 @@ class TechScreen(Screen):
         self.scroll.indicator_style = app.theme["indicator"]
         self.scroll.always_bounce_vertical = True
         self.add_subview(self.scroll)
-        self.coin_lbl = None
         self.nodes = {}
-        self.sig = None
 
     def on_show(self):
         self.build()
@@ -7106,40 +7093,27 @@ class TechScreen(Screen):
         self.scroll.frame = (0, 0, self.width, self.height)
         self.build()
 
-    def state_sig(self):
-        box = self.app.cards
-        return tuple((box.tech_state(t[0]), box.coins >= t[5]) for t in TECH)
-
-    def idle(self):
-        box = self.app.cards
-        box.earn()
-        if box.has("c4"):
-            box.coins += box.click_power() * 0.5
-        if self.coin_lbl is not None:
-            self.coin_lbl.text = "🪙 %s" % big(box.coins)
-        self.ticks = getattr(self, "ticks", 0) + 1
-        if self.ticks % 8 == 0 and self.sig != self.state_sig():
-            self.build()
-
     def buy(self, key):
         box = self.app.cards
-        state = box.tech_state(key)
-        name, effect, cost = [(t[3], t[4], t[5]) for t in TECH if t[0] == key][0]
-        if state == "acquis":
-            hud("%s : %s" % (name, effect), "success", 1.2)
+        state = box.state(key)
+        t = TECH_BY[key]
+        if state == "max":
+            hud("%s : niveau maximum" % t[3], "success", 1.0)
         elif state == "bloqué":
-            hud("Débloque d'abord la technologie du dessus", "error", 1.2)
-        elif not box.buy_tech(key):
-            hud("Il te manque %s pièces" % big(cost - box.coins), "error", 1.2)
+            hud("Achète d'abord l'amélioration du dessus", "error", 1.2)
+        elif not box.buy(key):
+            hud("Il te manque %s pièces" % big(box.cost(key) - box.coins), "error", 1.2)
         else:
             haptic(2)
-            box.compute_rate(self.app)
-            log("Cartes : technologie %s (%s)" % (key, name))
+            log("Cartes : amélioration %s (%s) niveau %d" % (key, t[3], box.level(key)))
+            offset = self.scroll.content_offset
             self.build()
+            self.scroll.content_offset = offset
             node = self.nodes.get(key)
             if node is not None:
                 pulse(node, 1.2, 0.3)
-            flash(self, TECH_BRANCHES[[t[1] for t in TECH if t[0] == key][0]][1], 0.3)
+            if box.level(key) == 1:
+                flash(self, TECH_BRANCHES[t[1]][1], 0.3)
 
     def build(self):
         app, t, sv = self.app, self.app.theme, self.scroll
@@ -7150,66 +7124,63 @@ class TechScreen(Screen):
         if w < 50:
             return
         box = app.cards
-        self.sig = self.state_sig()
         pad = 10
-        self.coin_lbl = make_label("🪙 %s" % big(box.coins), (pad, 8, w - 2 * pad, 30), 24, True,
-                                   t["text"], "center")
-        sv.add_subview(self.coin_lbl)
-        sv.add_subview(make_label("%d / %d technologies  •  touche une case pour l'acheter" % (
-            len(box.tech), len(TECH)), (pad, 40, w - 2 * pad, 16), 12, False, t["sub"],
-            "center"))
+        sv.add_subview(make_label("🪙 %s" % big(box.coins), (pad, 8, w - 2 * pad, 30), 24, True,
+                                  t["text"], "center"))
+        sv.add_subview(make_label("Touche une case pour acheter un niveau. Une case débloque "
+                                  "celle du dessous.", (pad, 40, w - 2 * pad, 16), 11, False,
+                                  t["sub"], "center"))
         top = 70
         col_w = (w - 2 * pad) / 3.0
-        nw, nh, gap = col_w - 10, 96, 34
+        nw, nh, gap = col_w - 10, 104, 30
         for i, (name, color) in enumerate(TECH_BRANCHES):
             sv.add_subview(make_label(name.upper(), (pad + i * col_w, top, col_w, 16), 12, True,
                                       color, "center"))
         top += 24
 
         def pos(key):
-            branch, rank = [(x[1], x[2]) for x in TECH if x[0] == key][0]
-            return (pad + branch * col_w + 5, top + rank * (nh + gap))
-        # liens entre les cases (dessinés d'abord, sous les cases)
-        for key, branch, rank, _, _, _, need in TECH:
+            return (pad + TECH_BY[key][1] * col_w + 5, top + TECH_BY[key][2] * (nh + gap))
+        for key, branch, rank, _, _, _, _, _, need in TECH:      # liens, sous les cases
             x, y = pos(key)
             for n in need:
                 px, py = pos(n)
-                on = n in box.tech
-                color = TECH_BRANCHES[[q[1] for q in TECH if q[0] == n][0]][1] if on \
-                    else t["line"]
+                color = TECH_BRANCHES[TECH_BY[n][1]][1] if box.level(n) else t["line"]
                 if abs(px - x) < 1:               # même colonne : trait vertical
-                    line = ui.View(frame=(x + nw / 2 - 2, py + nh, 4, y - py - nh),
-                                   background_color=color)
-                    sv.add_subview(line)
+                    sv.add_subview(ui.View(frame=(x + nw / 2 - 2, py + nh, 4, y - py - nh),
+                                           background_color=color))
                 else:                             # autre colonne : coude
                     midy = y - gap / 2
                     for fr in ((px + nw / 2 - 2, py + nh, 4, midy - py - nh),
                                (min(px, x) + nw / 2 - 2, midy - 2, abs(px - x) + 4, 4),
                                (x + nw / 2 - 2, midy, 4, y - midy)):
                         sv.add_subview(ui.View(frame=fr, background_color=color))
-        for key, branch, rank, name, effect, cost, need in TECH:
+        for key, branch, rank, name, effect, _, _, top_lvl, need in TECH:
             x, y = pos(key)
-            state = box.tech_state(key)
+            state = box.state(key)
+            lvl = box.level(key)
+            cost = box.cost(key)
             color = TECH_BRANCHES[branch][1]
             can = state == "possible" and box.coins >= cost
             node = ui.View(frame=(x, y, nw, nh), background_color=t["card"])
             node.corner_radius = 14
-            node.border_width = 3 if state != "bloqué" else 1
-            node.border_color = color if state != "bloqué" else t["line"]
-            if state == "acquis":
+            node.border_width = 3 if (lvl or state == "possible") else 1
+            node.border_color = color if (lvl or state == "possible") else t["line"]
+            if state == "max":
                 node.background_color = color
             elif can:
                 node.add_subview(gradient_view((0, 0, nw, nh), color, 14, 0.5))
             node.alpha = 0.5 if state == "bloqué" else 1.0
-            tc = "white" if state == "acquis" else t["text"]
-            node.add_subview(make_label(name, (4, 6, nw - 8, 32), 12, True, tc, "center", 2))
-            node.add_subview(make_label(effect, (4, 38, nw - 8, 34), 9, False,
-                                        (1, 1, 1, 0.9) if state == "acquis" else t["sub"],
-                                        "center", 3))
+            full = state == "max"
+            node.add_subview(make_label(name, (4, 5, nw - 8, 30), 12, True,
+                                        "white" if full else t["text"], "center", 2))
+            node.add_subview(make_label(effect, (4, 35, nw - 8, 32), 9, False,
+                                        (1, 1, 1, 0.9) if full else t["sub"], "center", 3))
+            node.add_subview(make_label("niv. %d / %d" % (lvl, top_lvl), (4, nh - 38, nw - 8, 14),
+                                        10, True, "white" if full else color, "center"))
             node.add_subview(make_label(
-                "✓ acquis" if state == "acquis" else ("🔒 " if state == "bloqué" else "🪙 ")
-                + big(cost), (4, nh - 22, nw - 8, 16), 11, True,
-                "white" if state == "acquis" else (UP if can else t["sub"]), "center"))
+                "✓ maximum" if full else ("🔒 " if state == "bloqué" else "🪙 ") + big(cost),
+                (4, nh - 22, nw - 8, 16), 11, True,
+                "white" if full else (UP if can else t["sub"]), "center"))
             b = ui.Button(frame=(0, 0, nw, nh))
             b.action = lambda s, k=key: self.buy(k)
             node.add_subview(b)
@@ -7219,24 +7190,30 @@ class TechScreen(Screen):
         sv.content_size = (w, top + rows * (nh + gap) + 20)
 
 
+STATUS_TAG = {"nouveau": ("NOUVEAU", "#ff2d55"), "mieux": ("MEILLEURE", "#ffd60a"),
+              "doublon": ("DOUBLON", "#34c759"), "perdu": ("STOCK PLEIN", "#8e8e93")}
+
+
 @guard_class
 class PackScreen(Screen):
-    """Ouverture d'un booster : le paquet tremble et s'ouvre, les cartes sont distribuées,
-    puis on les retourne une par une."""
+    """Ouverture d'un booster : il faut le taper jusqu'à ce qu'il cède, puis les cartes
+    sont distribuées et on les retourne une par une."""
 
-    def __init__(self, app, nav, family, pack, fresh, kind=0):
+    def __init__(self, app, nav, family, pack, status, kind=0):
         super().__init__()
         self.app, self.nav, self.family, self.kind = app, nav, family, kind
-        self.pack, self.fresh = pack, fresh
+        self.pack, self.status = pack, status
         self.screen_title = "Booster " + family
         self.background_color = app.theme["bg"]
+        self.hp_max = PACK_KINDS[kind][4]
+        self.hp = self.hp_max
         self.torn = False
         self.busy = False           # animation d'ouverture en cours
         self.shown = [False] * len(pack)
         self.slots = {}             # index -> vue affichée
         self.bottom = []            # boutons et textes sous les cartes
         self.waiting = {}           # adresse de jaquette -> image à remplir
-        self.pack_view = None
+        self.pack_view = self.hp_fill = self.hp_lbl = None
 
     def layout(self):
         self.build()
@@ -7248,16 +7225,16 @@ class PackScreen(Screen):
             iv.image = load_image(path) if CoverStore.has_file(path) else None
 
     def card_frame(self, i):
-        w = self.width
-        cw = min((w - 4 * 12) / 3.0, 150)
+        """Cartes rangées par 3, centrées, à une taille qui tient dans l'écran."""
+        w, h = self.width, self.height
+        n = len(self.pack)
+        rows = (n + 2) // 3
+        cw = min((w - 4 * 12) / 3.0, 150, ((h - 150) / float(rows) - 14) / 1.55)
         ch = cw * 1.55
-        top = 3 if len(self.pack) > 3 else len(self.pack)
-        if i < 3:
-            x0 = (w - top * cw - (top - 1) * 12) / 2
-            return (x0 + i * (cw + 12), 20, cw, ch)
-        rest = len(self.pack) - 3
-        x0 = (w - rest * cw - (rest - 1) * 12) / 2
-        return (x0 + (i - 3) * (cw + 12), 20 + ch + 14, cw, ch)
+        row = i // 3
+        in_row = min(3, n - row * 3)
+        x0 = (w - in_row * cw - (in_row - 1) * 12) / 2
+        return (x0 + (i % 3) * (cw + 12), 16 + row * (ch + 14), cw, ch)
 
     def build(self, deal=False):
         for v in list(self.subviews):
@@ -7269,8 +7246,8 @@ class PackScreen(Screen):
         t = self.app.theme
         color = FAMILY_COLORS.get(self.family, t["accent"])
         if not self.torn:
-            pw, ph = min(220, w - 120), min(320, h - 200)
-            pack = ui.View(frame=((w - pw) / 2, (h - ph) / 2 - 30, pw, ph),
+            pw, ph = min(220, w - 120), min(320, h - 240)
+            pack = ui.View(frame=((w - pw) / 2, (h - ph) / 2 - 50, pw, ph),
                            background_color=color)
             pack.corner_radius = 18
             pack.add_subview(gradient_view((0, 0, pw, ph), "white", 18, 0.4))
@@ -7279,17 +7256,28 @@ class PackScreen(Screen):
                                         "center"))
             pack.add_subview(make_label(self.family, (8, ph * 0.3 + 26, pw - 16, 70), 26, True,
                                         "white", "center", 2))
-            pack.add_subview(make_label("%d cartes" % len(self.pack), (0, ph - 46, pw, 20),
+            pack.add_subview(make_label(plural(len(self.pack), "carte"), (0, ph - 46, pw, 20),
                                         13, False, (1, 1, 1, 0.9), "center"))
             b = ui.Button(frame=(0, 0, pw, ph))
-            b.action = lambda s: self.tear()
+            b.action = lambda s: self.hit()
             pack.add_subview(b)
             self.add_subview(pack)
             self.pack_view = pack
-            hint = make_label("Touche le booster pour l'ouvrir", (0, (h + ph) / 2 - 10, w, 24),
-                              15, True, t["sub"], "center")
+            y = (h + ph) / 2 - 30
+            track = ui.View(frame=(50, y, w - 100, 16), background_color=t["field"])
+            track.corner_radius = 8
+            self.hp_fill = ui.View(frame=(0, 0, w - 100, 16), background_color="#ff453a")
+            self.hp_fill.corner_radius = 8
+            track.add_subview(self.hp_fill)
+            self.add_subview(track)
+            self.hp_lbl = make_label("", (0, y + 22, w, 20), 14, True, t["text"], "center")
+            self.add_subview(self.hp_lbl)
+            hint = make_label("Tape le booster pour le déchirer !  (%d dégât%s par tape)" % (
+                self.app.cards.damage(), "s" if self.app.cards.damage() > 1 else ""),
+                (0, y + 46, w, 20), 13, False, t["sub"], "center")
             self.add_subview(hint)
             self.bottom = [hint]
+            self.show_hp()
             return
         for i in range(len(self.pack)):
             card = self.show_slot(i)
@@ -7302,8 +7290,34 @@ class PackScreen(Screen):
                 def place(card=card, target=target):
                     card.frame = target
                     card.alpha = 1.0
-                animate_after(place, 0.28, 0.09 * i)
+                animate_after(place, 0.28, 0.08 * i)
         self.refresh_bottom()
+
+    def show_hp(self):
+        if self.hp_fill is not None:
+            full = self.width - 100
+            self.hp_fill.frame = (0, 0, max(0, full * self.hp / float(self.hp_max)), 16)
+        if self.hp_lbl is not None:
+            self.hp_lbl.text = "Résistance : %d / %d" % (max(0, self.hp), self.hp_max)
+
+    def hit(self):
+        """Une tape sur le booster : il perd des points, tremble, puis cède."""
+        if self.torn or self.busy:
+            return
+        dmg = self.app.cards.damage()
+        self.hp -= dmg
+        self.show_hp()
+        pack = self.pack_view
+        if pack is not None:
+            f = pack.frame
+            float_text(self, "-%d" % dmg, f[0] + f[2] / 2 + random.randint(-60, 60), f[1] + 10,
+                       "#ff453a", 20)
+        if self.hp > 0:
+            haptic(0)
+            if pack is not None:
+                pulse(pack, 0.94, 0.1)
+            return
+        self.tear()
 
     def refresh_bottom(self):
         for v in self.bottom:
@@ -7316,7 +7330,8 @@ class PackScreen(Screen):
             return
         t = self.app.theme
         w = self.width
-        y = self.card_frame(len(self.pack) - 1)[1] + self.card_frame(0)[3] + 20
+        last = self.card_frame(len(self.pack) - 1)
+        y = last[1] + last[3] + 14
         left = self.shown.count(False)
         if left:
             self.bottom.append(make_button("Tout retourner (%d)" % left, (40, y, w - 80, 44),
@@ -7324,14 +7339,19 @@ class PackScreen(Screen):
                                            15))
         else:
             best = max(c[2] for c in self.pack)
-            news = sum(1 for f in self.fresh if f)
-            self.bottom.append(make_label("%d nouveauté%s  •  meilleure carte : %s" % (
-                news, "s" if news > 1 else "", RARITY[best][1]), (10, y, w - 20, 20), 14, True,
-                RARITY[best][3], "center"))
-            self.bottom.append(make_label("Tes cartes rapportent maintenant +%s pièces / s" % (
-                "%.1f" % self.app.cards.rate).replace(".", ","), (10, y + 24, w - 20, 18), 12,
-                False, t["sub"], "center"))
-            self.bottom.append(make_button("Continuer", (40, y + 52, w - 80, 44),
+            c = collections.Counter(self.status)
+            parts = []
+            if c["nouveau"] + c["mieux"]:
+                parts.append("%d nouveauté%s" % (c["nouveau"] + c["mieux"],
+                                                 "s" if c["nouveau"] + c["mieux"] > 1 else ""))
+            if c["doublon"]:
+                parts.append(plural(c["doublon"], "doublon") + " en stock")
+            if c["perdu"]:
+                parts.append("%d perdu%s (stock plein)" % (c["perdu"],
+                                                           "s" if c["perdu"] > 1 else ""))
+            self.bottom.append(make_label("  •  ".join(parts), (10, y, w - 20, 20), 13, True,
+                                          DOWN if c["perdu"] else RARITY[best][3], "center"))
+            self.bottom.append(make_button("Continuer", (40, y + 28, w - 80, 44),
                                            lambda s: self.nav.pop(), t["accent"], "white", 15))
         for v in self.bottom:
             self.add_subview(v)
@@ -7344,10 +7364,12 @@ class PackScreen(Screen):
         label, g, tier, var = self.pack[i]
         if self.shown[i]:
             card, iv, url = make_card(self.app, label, g, frame[2], frame[3],
-                                      self.app.cards.count(label, g), self.fresh[i], var)
+                                      tag=STATUS_TAG.get(self.status[i]), var=var)
             if url:
                 self.waiting[url] = iv
             card.frame = frame
+            if self.status[i] == "perdu":
+                card.alpha = 0.55
         else:
             t = self.app.theme
             card = ui.View(frame=frame, background_color=FAMILY_COLORS.get(self.family,
@@ -7417,17 +7439,14 @@ class PackScreen(Screen):
             hud("🌟 LÉGENDAIRE : %s" % g, "success", 1.5)
         elif var == 3:
             hud("👑 CARTE EN OR : %s" % g, "success", 1.5)
-        if back is None:
+        try:
+            squeeze = ui.Transform.scale(0.03, 1.0)
+        except Exception:
+            squeeze = None
+        if back is None or squeeze is None:
             reveal()
         else:
-            try:
-                squeeze = ui.Transform.scale(0.03, 1.0)
-            except Exception:
-                squeeze = None
-            if squeeze is None:
-                reveal()
-            else:
-                animate(lambda: set_transform(back, squeeze), 0.12, reveal)
+            animate(lambda: set_transform(back, squeeze), 0.12, reveal)
         if not quiet:
             self.refresh_bottom()
 
@@ -7480,11 +7499,10 @@ class AlbumScreen(Screen):
             iv.image = load_image(path) if CoverStore.has_file(path) else None
 
     def sell(self):
-        n, total = self.app.cards.sell_doubles(self.app)
+        n, total = self.app.cards.sell(self.app)
         if n:
-            haptic()
-            hud("+%s pièces (%s)" % (big(total), plural(n, "double")), "success", 1.2)
-            log("Cartes : %d doubles vendus, +%d pièces" % (n, total))
+            haptic(0)
+            hud("+%s pièces (%s)" % (big(total), plural(n, "doublon")), "success", 0.6)
         self.build()
 
     def owned(self):
@@ -7509,12 +7527,12 @@ class AlbumScreen(Screen):
         box = app.cards
         pad, cw = 12, w - 24
         y = 6
-        n, value = box.doubles_value(app)
+        n = box.doubles()
         if n:
-            sv.add_subview(make_button("Vendre mes %s : +%s pièces" % (plural(n, "double"),
-                                                                       big(value)),
-                                       (pad, y, cw, 40), lambda s: self.sell(), "#ff9f0a",
-                                       "white", 14))
+            k = min(n, box.demand())
+            sv.add_subview(make_button("💰 Vendre %s  (stock %d / %d : %s pièces)" % (
+                plural(k, "doublon"), n, box.capacity(), big(box.stock_value(app))),
+                (pad, y, cw, 40), lambda s: self.sell(), "#34c759", "white", 13))
             y += 40 + 10
         cards = self.owned()
         if not cards:
