@@ -70,6 +70,7 @@ LEGACY_FILE = os.path.join(DOCS, "collection_ps2.json")
 CACHE_FILE = os.path.join(DOCS, "prix_cache.json")
 CSV_FILE = os.path.join(DOCS, "valeur_collection.csv")
 HISTORY_FILE = os.path.join(DOCS, "valeur_historique.json")  # valeur de la collection par jour
+PRICE_HISTORY_FILE = os.path.join(DOCS, "prix_historique.json")  # prix de mes jeux par jour
 DEBUG_FILE = os.path.join(DOCS, "debug_pricecharting.html")
 TOKEN_FILE = os.path.join(DOCS, "pricecharting_token.txt")
 COVER_DIR = os.path.join(DOCS, "jaquettes")
@@ -99,7 +100,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.47 (16/11/2026)"
+APP_VERSION = "3.48 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -2919,6 +2920,7 @@ class App:
         self.last_prices_save = time.time()
         self.added_dirty = False  # prix d'ajout figés à enregistrer
         self.history = ValueHistory()
+        self.price_history = PriceHistory()
         self.bg_paused = False    # chargement en pause car l'app est en arrière-plan
         self.awake = False        # écran maintenu allumé pendant un gros chargement
         self.safe_mode = False    # démarrage sans chargement (après plantages répétés)
@@ -3925,6 +3927,7 @@ class HomeScreen(Screen):
         value = sum(self.app.console_value(l)[0] for l in LABELS)
         count_lbl.text = "%d / %d jeux" % (owned, total)
         self.app.history.record(value, self.app.coll.total())
+        self.app.price_history.record(self.app)
         if getattr(self, "wish_btn", None):
             self.wish_btn.title = self.wish_title()
         value_lbl.text = "Valeur estimée : %s" % eur(value)
@@ -4828,6 +4831,47 @@ class ValueHistory:
 
     def series(self):
         return sorted(self.days.items())
+
+
+class PriceHistory:
+    """Prix jour par jour des jeux possédés et souhaités (petite courbe sur la fiche)."""
+    KEEP = 90
+
+    def __init__(self):
+        raw = read_json(PRICE_HISTORY_FILE)
+        self.data = raw if isinstance(raw, dict) else {}
+        self.last_write = 0.0
+        self.day_done = None
+
+    def record(self, app):
+        """Une fois par jour (et au plus toutes les 10 min) : prix du jour de chaque jeu."""
+        day = time.strftime("%Y-%m-%d")
+        if self.day_done == day and time.time() - self.last_write < 600:
+            return
+        keys = [key_of(l, g) for l in LABELS for g in app.coll.owned_games(l)] + \
+            list(app.coll.wish)
+        for key in keys:
+            label, _, g = key.partition("|")
+            if label not in GAMES_BY:
+                continue
+            p = app.price(label, g)
+            if not p or p.get("manual"):
+                continue
+            days = self.data.setdefault(key, {})
+            days[day] = round(p["mid"], 2)
+            if len(days) > self.KEEP:
+                for k in sorted(days)[:-self.KEEP]:
+                    days.pop(k)
+        self.day_done = day
+        self.last_write = time.time()
+        try:
+            write_json(PRICE_HISTORY_FILE, self.data)
+        except OSError:
+            pass
+
+    def series(self, label, game):
+        d = self.data.get(key_of(label, game))
+        return sorted(d.items()) if isinstance(d, dict) else []
 
 
 def chart_image(points, w, h, color, text_color):
@@ -5948,6 +5992,26 @@ class DetailScreen(Screen):
         card.frame = (pad, y, cw, cy + 6)
         sv.add_subview(card)
         y += cy + 18
+
+        # --- évolution du prix de ce jeu
+        pts = app.price_history.series(label, game)
+        if len(pts) >= 2:
+            box = ui.View(frame=(pad, y, w - 2 * pad, 128), background_color=t["card"])
+            box.corner_radius = 12
+            box.add_subview(make_label("Évolution du prix (%d jours)" % len(pts),
+                                       (14, 8, w, 16), 12, True, t["sub"]))
+            first, last = pts[0][1], pts[-1][1]
+            txt, col = delta_text((first, last - first), short=True)
+            box.add_subview(make_label(txt or "=", (w - 2 * pad - 114, 8, 100, 16), 12, True,
+                                       col, "right"))
+            img = chart_image(pts, w - 2 * pad - 28, 80, col if txt and txt != "=" else
+                              t["accent"], t["sub"])
+            if img:
+                iv = ui.ImageView(frame=(14, 32, w - 2 * pad - 28, 80))
+                iv.image = img
+                box.add_subview(iv)
+            sv.add_subview(box)
+            y += 128 + 14
 
         # --- actions
         actions = [
