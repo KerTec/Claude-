@@ -102,7 +102,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.56 (16/11/2026)"
+APP_VERSION = "3.57 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -4432,7 +4432,14 @@ class ConsoleScreen(Screen):
         got, total = self.app.coll.count(self.label), len(GAMES_BY[self.label])
         value, known = self.app.console_value(self.label)
         self.summary.text = "%d / %d obtenus" % (got, total)
-        txt = ("Valeur %s" % eur(value)) if got else "Aucun jeu pour l'instant"
+        txt = ("Valeur %s" % eur_short(value)) if got else "Aucun jeu"
+        owned = self.app.coll.owned[self.label]
+        rest = [self.app.price(self.label, g) for g in GAMES_BY[self.label] if g not in owned]
+        cost = sum(p["mid"] for p in rest if p)
+        if rest and cost:
+            txt += "   •   reste %d ≈ %s" % (len(rest), eur_short(cost))
+        elif not rest:
+            txt += "   •   sélection complète 🏆"
         if self.complete:
             d = self.app.full.get(self.label)
             txt += "   •   +%d jeux%s" % (len(d["rows"]), "" if d.get("done") else "…")
@@ -5901,6 +5908,93 @@ class SearchScreen(Screen):
         sv.content_size = (w, y + 10)
 
 
+# ====================================================================== idées d'achat
+@guard_class
+class IdeasScreen(Screen):
+    """Jeux manquants les moins chers, sur les consoles où j'ai déjà des jeux."""
+    screen_title = "Idées d'achat"
+    BUDGETS = [5, 10, 20, None]
+    MAX = 60
+
+    def __init__(self, app, nav):
+        super().__init__()
+        self.app, self.nav = app, nav
+        t = app.theme
+        self.background_color = t["bg"]
+        self.budget = 1
+        self.ctrl = ui.SegmentedControl()
+        self.ctrl.segments = ["≤ 5 €", "≤ 10 €", "≤ 20 €", "Tout"]
+        self.ctrl.selected_index = 1
+        self.ctrl.action = self.changed
+        self.add_subview(self.ctrl)
+        self.info = make_label("", (0, 0, 10, 10), 12, False, t["sub"])
+        self.add_subview(self.info)
+        self.scroll = ui.ScrollView()
+        self.scroll.indicator_style = t["indicator"]
+        self.scroll.always_bounce_vertical = True
+        self.add_subview(self.scroll)
+
+    def on_show(self):
+        self.build()
+
+    def changed(self, sender):
+        self.budget = sender.selected_index
+        self.build()
+
+    def layout(self):
+        w, h = self.width, self.height
+        self.ctrl.frame = (10, 8, w - 20, 30)
+        self.info.frame = (14, 44, w - 28, 16)
+        self.scroll.frame = (0, 64, w, max(0, h - 64))
+        self.build()
+
+    def ideas(self):
+        app = self.app
+        labels = [l for l in LABELS if app.coll.owned[l]] or list(LABELS)
+        limit = self.BUDGETS[self.budget]
+        out = []
+        for label in labels:
+            owned = app.coll.owned[label]
+            for g in GAMES_BY[label]:
+                if g in owned:
+                    continue
+                p = app.price(label, g)
+                if p and (limit is None or p["mid"] <= limit):
+                    out.append((p["mid"], label, g))
+        out.sort()
+        return out
+
+    def build(self):
+        app, t, sv = self.app, self.app.theme, self.scroll
+        for v in list(sv.subviews):
+            sv.remove_subview(v)
+        w = self.width
+        if w < 50:
+            return
+        ideas = self.ideas()
+        self.info.text = "%d jeu%s manquant%s sur tes consoles, les moins chers d'abord" % (
+            len(ideas), "x" if len(ideas) > 1 else "", "s" if len(ideas) > 1 else "")
+        pad, cw = 10, w - 20
+        y = 4
+        for price, label, g in ideas[:self.MAX]:
+            row = ui.View(frame=(pad, y, cw, 48), background_color=t["card"])
+            row.corner_radius = 10
+            bar = ui.View(frame=(0, 8, 4, 32), background_color=family_color(label, t["accent"]))
+            bar.corner_radius = 2
+            row.add_subview(bar)
+            row.add_subview(make_label(g, (14, 6, cw - 110, 18), 14, True, t["text"]))
+            sub = FULL_NAME[label] + ("  •  ♥" if app.coll.is_wished(label, g) else "")
+            row.add_subview(make_label(sub, (14, 26, cw - 110, 14), 11, False, t["sub"]))
+            row.add_subview(make_label(eur(price), (cw - 96, 0, 84, 48), 15, True, UP, "right"))
+            b = ui.Button(frame=(0, 0, cw, 48))
+            b.action = (lambda s, l=label, g=g:
+                        self.nav.push(DetailScreen(self.app, self.nav, l, g)))
+            row.add_subview(b)
+            sv.add_subview(row)
+            y += 54
+        sv.content_size = (w, y + 10)
+
+
 # ====================================================================== liste de souhaits
 @guard_class
 class WishScreen(Screen):
@@ -5909,6 +6003,7 @@ class WishScreen(Screen):
     def __init__(self, app, nav):
         super().__init__()
         self.app, self.nav = app, nav
+        self.bar_button = ("Idées", lambda s: self.nav.push(IdeasScreen(self.app, self.nav)))
         self.background_color = app.theme["bg"]
         self.scroll = ui.ScrollView()
         self.scroll.indicator_style = app.theme["indicator"]
