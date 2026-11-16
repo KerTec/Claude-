@@ -103,7 +103,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.59 (16/11/2026)"
+APP_VERSION = "3.60 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -5197,7 +5197,7 @@ def share_card(app):
                 k = min((cw_ - 8) / float(iw), (ch_ - 8) / float(ih))
                 img.draw(x + (cw_ - iw * k) / 2, y + (ch_ - ih * k) / 2, iw * k, ih * k)
             ui.draw_string(g, (x, y + ch_ + 3, cw_, 14), ("<System-Bold>", 10), "white",
-                           ui.ALIGN_CENTER, ui.LB_TRUNCATING_TAIL)
+                           ui.ALIGN_CENTER, getattr(ui, "LB_TRUNCATE_TAIL", 4))
             ui.draw_string("%s  •  %s" % (label, eur_short(value)), (x, y + ch_ + 18, cw_, 14),
                            ("<System>", 10), rar[3] if rar else (1, 1, 1, 0.6), ui.ALIGN_CENTER)
         # consoles
