@@ -88,7 +88,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.70 (16/11/2026)"
+APP_VERSION = "3.71 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -6262,6 +6262,26 @@ UPGRADES = [
 ]
 
 
+# arbre de technologies : (clé, branche, rang, nom, effet, prix, prérequis)
+TECH = [
+    ("c1", 0, 0, "Double tape", "tapes ×2", 500, []),
+    ("c2", 0, 1, "Coup critique", "1 tape sur 10 vaut ×10", 2500, ["c1"]),
+    ("c3", 0, 2, "Tape en or", "chaque tape ajoute 1 s de revenu", 15000, ["c2"]),
+    ("c4", 0, 3, "Auto-tape", "2 tapes par seconde toutes seules", 60000, ["c3"]),
+    ("r1", 1, 0, "Étagère", "revenu des cartes ×1,5", 800, []),
+    ("r2", 1, 1, "Doubles utiles", "chaque double : +10 % du revenu de sa carte", 4000,
+     ["r1"]),
+    ("r3", 1, 2, "Nuit blanche", "hors de l'écran : revenu complet, 8 h", 20000, ["r2"]),
+    ("r4", 1, 3, "Musée", "revenu des cartes ×2", 100000, ["r3"]),
+    ("b1", 2, 0, "Sixième carte", "6 cartes par booster", 1500, []),
+    ("b2", 2, 1, "Bon vendeur", "les doubles se vendent ×3", 6000, ["b1"]),
+    ("b3", 2, 2, "Chasseur", "2 fois plus de variantes rares", 30000, ["b2"]),
+    ("b4", 2, 3, "Livraison rapide", "booster gratuit toutes les heures", 80000, ["b3"]),
+    ("m1", 1, 4, "Maître collectionneur", "tapes et revenu ×2", 500000, ["c4", "r4", "b4"]),
+]
+TECH_BRANCHES = [("Tapes", "#8e44ad"), ("Cartes", "#34c759"), ("Boosters", "#ff9f0a")]
+
+
 def big(n):
     """1234 -> « 1 234 », 1 500 000 -> « 1,50 M »."""
     n = float(n)
@@ -6294,6 +6314,9 @@ class CardBox:
         self.up = {k: int(v) for k, v in up.items()
                    if isinstance(k, str) and isinstance(v, int) and v > 0} \
             if isinstance(up, dict) else {}
+        tech = raw.get("tech")
+        self.tech = set(x for x in tech if isinstance(x, str)) if isinstance(tech, list) \
+            else set()
         self.coins = num("coins", float(START_COINS))
         self.daily = raw.get("daily") if isinstance(raw.get("daily"), str) else ""
         self.free = num("free", 0.0)
@@ -6308,6 +6331,7 @@ class CardBox:
         try:
             write_json(CARDS_FILE, {"coins": round(self.coins, 2), "cards": self.cards,
                                     "var": self.var, "up": self.up, "daily": self.daily,
+                                    "tech": sorted(self.tech),
                                     "free": self.free, "opened": self.opened,
                                     "taps": self.taps, "ts": self.ts})
         except OSError as e:
@@ -6326,8 +6350,34 @@ class CardBox:
     def level(self, key):
         return self.up.get(key, 0)
 
+    def has(self, key):
+        return key in self.tech
+
+    def tech_state(self, key):
+        """« acquis », « possible » (prérequis remplis) ou « bloqué »."""
+        if key in self.tech:
+            return "acquis"
+        need = [t[6] for t in TECH if t[0] == key][0]
+        return "possible" if all(n in self.tech for n in need) else "bloqué"
+
+    def buy_tech(self, key):
+        cost = [t[5] for t in TECH if t[0] == key][0]
+        if self.tech_state(key) != "possible" or self.coins < cost:
+            return False
+        self.coins -= cost
+        self.tech.add(key)
+        self.save()
+        return True
+
     def click_power(self):
-        return 1 + self.level("click")
+        power = (1 + self.level("click")) * (2 if self.has("c1") else 1) * \
+            (2 if self.has("m1") else 1)
+        if self.has("c3"):
+            power += self.rate
+        return power
+
+    def pack_size(self):
+        return PACK_SIZE + (1 if self.has("b1") else 0)
 
     def upgrade_cost(self, key):
         for k, _, _, base, grow, _ in UPGRADES:
@@ -6350,8 +6400,13 @@ class CardBox:
         total = 0.0
         for key in self.cards:
             label, _, g = key.partition("|")
-            total += INCOME[card_tier(app, label, g)] * VARIANTS[self.var.get(key, 0)][3]
-        self.rate = total * (1 + 0.25 * self.level("income"))
+            one = INCOME[card_tier(app, label, g)] * VARIANTS[self.var.get(key, 0)][3]
+            if self.has("r2"):                      # doubles utiles (10 au plus par carte)
+                one *= 1 + 0.1 * min(10, self.cards[key] - 1)
+            total += one
+        mult = (1.5 if self.has("r1") else 1) * (2 if self.has("r4") else 1) * \
+            (2 if self.has("m1") else 1)
+        self.rate = total * (1 + 0.25 * self.level("income")) * mult
         return self.rate
 
     def earn(self, offline=False):
@@ -6361,7 +6416,12 @@ class CardBox:
         self.ts = now
         if dt <= 0 or not self.rate:
             return 0.0
-        gain = self.rate * min(dt, OFFLINE_MAX) * 0.5 if offline else self.rate * min(dt, 5.0)
+        if offline:
+            night = self.has("r3")
+            gain = self.rate * min(dt, OFFLINE_MAX * (2 if night else 1)) * \
+                (1.0 if night else 0.5)
+        else:
+            gain = self.rate * min(dt, 5.0)
         self.coins += gain
         return gain
 
@@ -6379,14 +6439,16 @@ class CardBox:
 
     def free_wait(self):
         """Secondes avant le prochain booster gratuit (0 = disponible)."""
-        return max(0, int(self.free + FREE_EVERY - time.time()))
+        every = 3600 if self.has("b4") else FREE_EVERY
+        return max(0, int(self.free + every - time.time()))
 
     def doubles_value(self, app):
         total = n = 0
         for key, c in self.cards.items():
             if c > 1:
                 label, _, g = key.partition("|")
-                total += (c - 1) * SELL_VALUE[card_tier(app, label, g)]
+                total += (c - 1) * SELL_VALUE[card_tier(app, label, g)] * \
+                    (3 if self.has("b2") else 1)
                 n += c - 1
         return n, total
 
@@ -6421,13 +6483,13 @@ def pack_pool(app, family):
     return pool
 
 
-def draw_pack(app, family, kind=0, luck=0, rng=random):
-    """5 cartes : [(console, jeu, rareté, variante)]."""
+def draw_pack(app, family, kind=0, luck=0, rng=random, size=PACK_SIZE, hunter=False):
+    """Les cartes d'un booster : [(console, jeu, rareté, variante)]."""
     pool = pack_pool(app, family)
     _, _, odds, odds_last = PACK_KINDS[kind]
     out = []
-    for i in range(PACK_SIZE):
-        base = odds_last if i == PACK_SIZE - 1 else odds
+    for i in range(size):
+        base = odds_last if i == size - 1 else odds
         weights = [w * (1 + 0.15 * luck * t) for t, w in enumerate(base)]   # trèfle
         tier = rng.choices(range(5), weights=weights)[0]
         while tier > 0 and not pool[tier]:       # pas de carte de cette rareté ici
@@ -6438,7 +6500,8 @@ def draw_pack(app, family, kind=0, luck=0, rng=random):
             continue
         label, g = rng.choice(pool[tier])
         var = rng.choices(range(len(VARIANTS)),
-                          weights=[v[2] * (1 + 0.1 * luck * j) for j, v in enumerate(VARIANTS)])[0]
+                          weights=[v[2] * (1 + 0.1 * luck * j) * (2 if hunter and j else 1)
+                                   for j, v in enumerate(VARIANTS)])[0]
         out.append((label, g, tier, var))
     return out
 
@@ -6604,6 +6667,8 @@ class CardsScreen(Screen):
         """4 fois par seconde : revenu des cartes, compteur de pièces, minuteur."""
         box = self.app.cards
         box.earn()
+        if box.has("c4"):                     # auto-tape : 2 tapes par seconde
+            box.coins += box.click_power() * 0.5
         self.ticks += 1
         self.show_coins()
         if self.free_btn is not None and self.ticks % 4 == 0:
@@ -6616,7 +6681,12 @@ class CardsScreen(Screen):
     def afford_sig(self):
         box = self.app.cards
         return tuple(box.coins >= box.upgrade_cost(u[0]) for u in UPGRADES) + \
-            tuple(box.coins >= k[1] for k in PACK_KINDS)
+            tuple(box.coins >= k[1] for k in PACK_KINDS) + (self.tech_ready(),)
+
+    def tech_ready(self):
+        box = self.app.cards
+        return sum(1 for t in TECH if box.tech_state(t[0]) == "possible"
+                   and box.coins >= t[5])
 
     def show_coins(self):
         if self.coin_lbl is not None:
@@ -6631,6 +6701,9 @@ class CardsScreen(Screen):
     def tap(self):
         box = self.app.cards
         power = box.click_power()
+        crit = box.has("c2") and random.random() < 0.1
+        if crit:
+            power *= 10
         box.coins += power
         box.taps += 1
         self.show_coins()
@@ -6641,8 +6714,9 @@ class CardsScreen(Screen):
             if len(self.floats) < 6:
                 self.floats.append(now)
                 f = self.tap_btn.frame
-                float_text(self.scroll, "+%s" % big(power),
-                           f[0] + f[2] / 2 + random.randint(-50, 50), f[1] + 6, "#ffd60a")
+                float_text(self.scroll, ("CRITIQUE +%s" if crit else "+%s") % big(power),
+                           f[0] + f[2] / 2 + random.randint(-50, 50), f[1] + 6,
+                           "#ff453a" if crit else "#ffd60a", 22 if crit else 18)
         if box.taps % 25 == 0:
             haptic(0)
 
@@ -6680,7 +6754,8 @@ class CardsScreen(Screen):
             return
         else:
             box.coins -= cost
-        pack = draw_pack(self.app, family, kind, box.level("luck"))
+        pack = draw_pack(self.app, family, kind, box.level("luck"), size=box.pack_size(),
+                         hunter=box.has("b3"))
         fresh = []
         for label, g, _, var in pack:
             key = key_of(label, g)
@@ -6742,7 +6817,7 @@ class CardsScreen(Screen):
         sv.add_subview(self.free_btn)
         y += 42 + 18
         # --- boosters
-        sv.add_subview(make_label("BOOSTERS  (%d cartes)" % PACK_SIZE, (pad + 2, y, cw, 18), 13,
+        sv.add_subview(make_label("BOOSTERS  (%d cartes)" % box.pack_size(), (pad + 2, y, cw, 18), 13,
                                   True, t["sub"]))
         y += 24
         seg = ui.SegmentedControl(frame=(pad, y, cw, 32))
@@ -6783,6 +6858,14 @@ class CardsScreen(Screen):
             sv.add_subview(pack)
         rows = (len(families) + cols - 1) // cols
         y += rows * (bh + 12) + 10
+        # --- arbre de technologies
+        ready = self.tech_ready()
+        sv.add_subview(make_button(
+            "🌳  Arbre de technologies  (%d / %d)%s" % (
+                len(box.tech), len(TECH), "  •  %d à acheter !" % ready if ready else ""),
+            (pad, y, cw, 46), lambda s: self.nav.push(TechScreen(self.app, self.nav)),
+            "#34c759" if ready else t["card"], "white" if ready else t["accent"], 14))
+        y += 46 + 16
         # --- améliorations
         sv.add_subview(make_label("AMÉLIORATIONS", (pad + 2, y, cw, 18), 13, True, t["sub"]))
         y += 24
@@ -6815,6 +6898,143 @@ class CardsScreen(Screen):
             (pad, y + 4, cw, 92), 11, False, t["sub"], "center", 6))
         y += 104
         sv.content_size = (w, y)
+
+
+@guard_class
+class TechScreen(Screen):
+    """Arbre de technologies : 3 branches qui se rejoignent, achats définitifs."""
+    screen_title = "Technologies"
+
+    def __init__(self, app, nav):
+        super().__init__()
+        self.app, self.nav = app, nav
+        self.background_color = app.theme["bg"]
+        self.scroll = ui.ScrollView()
+        self.scroll.indicator_style = app.theme["indicator"]
+        self.scroll.always_bounce_vertical = True
+        self.add_subview(self.scroll)
+        self.coin_lbl = None
+        self.nodes = {}
+        self.sig = None
+
+    def on_show(self):
+        self.build()
+
+    def layout(self):
+        self.scroll.frame = (0, 0, self.width, self.height)
+        self.build()
+
+    def state_sig(self):
+        box = self.app.cards
+        return tuple((box.tech_state(t[0]), box.coins >= t[5]) for t in TECH)
+
+    def idle(self):
+        box = self.app.cards
+        box.earn()
+        if box.has("c4"):
+            box.coins += box.click_power() * 0.5
+        if self.coin_lbl is not None:
+            self.coin_lbl.text = "🪙 %s" % big(box.coins)
+        self.ticks = getattr(self, "ticks", 0) + 1
+        if self.ticks % 8 == 0 and self.sig != self.state_sig():
+            self.build()
+
+    def buy(self, key):
+        box = self.app.cards
+        state = box.tech_state(key)
+        name, effect, cost = [(t[3], t[4], t[5]) for t in TECH if t[0] == key][0]
+        if state == "acquis":
+            hud("%s : %s" % (name, effect), "success", 1.2)
+        elif state == "bloqué":
+            hud("Débloque d'abord la technologie du dessus", "error", 1.2)
+        elif not box.buy_tech(key):
+            hud("Il te manque %s pièces" % big(cost - box.coins), "error", 1.2)
+        else:
+            haptic(2)
+            box.compute_rate(self.app)
+            log("Cartes : technologie %s (%s)" % (key, name))
+            self.build()
+            node = self.nodes.get(key)
+            if node is not None:
+                pulse(node, 1.2, 0.3)
+            flash(self, TECH_BRANCHES[[t[1] for t in TECH if t[0] == key][0]][1], 0.3)
+
+    def build(self):
+        app, t, sv = self.app, self.app.theme, self.scroll
+        for v in list(sv.subviews):
+            sv.remove_subview(v)
+        self.nodes = {}
+        w = self.width
+        if w < 50:
+            return
+        box = app.cards
+        self.sig = self.state_sig()
+        pad = 10
+        self.coin_lbl = make_label("🪙 %s" % big(box.coins), (pad, 8, w - 2 * pad, 30), 24, True,
+                                   t["text"], "center")
+        sv.add_subview(self.coin_lbl)
+        sv.add_subview(make_label("%d / %d technologies  •  touche une case pour l'acheter" % (
+            len(box.tech), len(TECH)), (pad, 40, w - 2 * pad, 16), 12, False, t["sub"],
+            "center"))
+        top = 70
+        col_w = (w - 2 * pad) / 3.0
+        nw, nh, gap = col_w - 10, 96, 34
+        for i, (name, color) in enumerate(TECH_BRANCHES):
+            sv.add_subview(make_label(name.upper(), (pad + i * col_w, top, col_w, 16), 12, True,
+                                      color, "center"))
+        top += 24
+
+        def pos(key):
+            branch, rank = [(x[1], x[2]) for x in TECH if x[0] == key][0]
+            return (pad + branch * col_w + 5, top + rank * (nh + gap))
+        # liens entre les cases (dessinés d'abord, sous les cases)
+        for key, branch, rank, _, _, _, need in TECH:
+            x, y = pos(key)
+            for n in need:
+                px, py = pos(n)
+                on = n in box.tech
+                color = TECH_BRANCHES[[q[1] for q in TECH if q[0] == n][0]][1] if on \
+                    else t["line"]
+                if abs(px - x) < 1:               # même colonne : trait vertical
+                    line = ui.View(frame=(x + nw / 2 - 2, py + nh, 4, y - py - nh),
+                                   background_color=color)
+                    sv.add_subview(line)
+                else:                             # autre colonne : coude
+                    midy = y - gap / 2
+                    for fr in ((px + nw / 2 - 2, py + nh, 4, midy - py - nh),
+                               (min(px, x) + nw / 2 - 2, midy - 2, abs(px - x) + 4, 4),
+                               (x + nw / 2 - 2, midy, 4, y - midy)):
+                        sv.add_subview(ui.View(frame=fr, background_color=color))
+        for key, branch, rank, name, effect, cost, need in TECH:
+            x, y = pos(key)
+            state = box.tech_state(key)
+            color = TECH_BRANCHES[branch][1]
+            can = state == "possible" and box.coins >= cost
+            node = ui.View(frame=(x, y, nw, nh), background_color=t["card"])
+            node.corner_radius = 14
+            node.border_width = 3 if state != "bloqué" else 1
+            node.border_color = color if state != "bloqué" else t["line"]
+            if state == "acquis":
+                node.background_color = color
+            elif can:
+                node.add_subview(gradient_view((0, 0, nw, nh), color, 14, 0.5))
+            node.alpha = 0.5 if state == "bloqué" else 1.0
+            tc = "white" if state == "acquis" else t["text"]
+            node.add_subview(make_label(name, (4, 6, nw - 8, 32), 12, True, tc, "center", 2))
+            node.add_subview(make_label(effect, (4, 38, nw - 8, 34), 9, False,
+                                        (1, 1, 1, 0.9) if state == "acquis" else t["sub"],
+                                        "center", 3))
+            node.add_subview(make_label(
+                "✓ acquis" if state == "acquis" else ("🔒 " if state == "bloqué" else "🪙 ")
+                + big(cost), (4, nh - 22, nw - 8, 16), 11, True,
+                "white" if state == "acquis" else (UP if can else t["sub"]), "center"))
+            b = ui.Button(frame=(0, 0, nw, nh))
+            b.action = lambda s, k=key: self.buy(k)
+            node.add_subview(b)
+            sv.add_subview(node)
+            self.nodes[key] = node
+        rows = max(x[2] for x in TECH) + 1
+        sv.content_size = (w, top + rows * (nh + gap) + 20)
 
 
 @guard_class
