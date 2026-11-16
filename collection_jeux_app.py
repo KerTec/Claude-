@@ -98,7 +98,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.45 (16/11/2026)"
+APP_VERSION = "3.46 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -3875,6 +3875,10 @@ class HomeScreen(Screen):
             self.later(self.refresh_values, 0.8)
 
     def on_cover(self, url):
+        iv = getattr(self, "recent_refs", {}).pop(url, None)
+        if iv is not None:
+            path = self.app.covers.path(url)
+            iv.image = load_image(path) if CoverStore.has_file(path) else None
         for label in list(getattr(self, "photo_refs", {})):
             if console_icon_url(label) == url:
                 self.show_photo(label)
@@ -3893,9 +3897,19 @@ class HomeScreen(Screen):
         iv.hidden = img is None
         ph.hidden = img is not None
 
+    def recent(self):
+        """10 derniers jeux ajoutés : [(console, jeu)]."""
+        out = []
+        for key, rec in list(self.app.coll.added.items()):
+            label, _, g = key.partition("|")
+            if label in GAMES_BY and self.app.coll.is_owned(label, g):
+                out.append((rec.get("ts", 0) if isinstance(rec, dict) else 0, label, g))
+        out.sort(reverse=True)
+        return [(l, g) for _, l, g in out[:10]]
+
     def layout_sig(self):
         return (self.width, self.app.safe_mode, bool(self.app.update),
-                bool(NET.blocked_minutes()), self.app.interrupted)
+                bool(NET.blocked_minutes()), self.app.interrupted, tuple(self.recent()))
 
     def refresh_values(self):
         """Met à jour les chiffres sans recréer l'écran (moins de calcul). Redessine
@@ -4033,6 +4047,46 @@ class HomeScreen(Screen):
                                      size=13))
         sv.add_subview(card)
         y += 248 + pad
+        # --- derniers ajouts (jaquettes)
+        self.recent_refs = {}
+        recent = self.recent()
+        if recent:
+            sv.add_subview(make_label("DERNIERS AJOUTS", (pad + 2, y, w, 18), 13, True,
+                                      t["sub"]))
+            y += 24
+            rw, rh = 76, 104
+            row = ui.ScrollView(frame=(0, y, w, rh + 22))
+            row.shows_horizontal_scroll_indicator = False
+            row.always_bounce_horizontal = True
+            for i, (label, g) in enumerate(recent):
+                x = pad + i * (rw + 10)
+                box = ui.View(frame=(x, 0, rw, rh),
+                              background_color=family_color(label, t["accent"]))
+                box.corner_radius = 8
+                box.alpha = 1.0
+                iv = ui.ImageView(frame=(0, 0, rw, rh))
+                iv.content_mode = ui.CONTENT_SCALE_ASPECT_FIT
+                box.add_subview(make_label(g, (4, 30, rw - 8, 44), 10, True, "white", "center",
+                                           3))
+                box.add_subview(iv)
+                url = self.app.cover_url(label, g)
+                path = self.app.covers.path(url) if url else None
+                img = load_image(path) if path and CoverStore.has_file(path) else None
+                if img is not None:
+                    iv.image = img
+                elif url:
+                    self.app.covers.want(url)
+                    self.recent_refs[url] = iv
+                b = ui.Button(frame=(0, 0, rw, rh))
+                b.action = (lambda s, l=label, g=g:
+                            self.nav.push(DetailScreen(self.app, self.nav, l, g)))
+                box.add_subview(b)
+                row.add_subview(box)
+                row.add_subview(make_label(label, (x, rh + 3, rw, 16), 10, True, t["sub"],
+                                           "center"))
+            row.content_size = (pad * 2 + len(recent) * (rw + 10) - 10, rh + 22)
+            sv.add_subview(row)
+            y += rh + 22 + pad
         # --- sélecteur façon RetroArch : une rangée horizontale par famille, avec la
         # photo de chaque console
         cw, ch, gap = 148, 214, 12
