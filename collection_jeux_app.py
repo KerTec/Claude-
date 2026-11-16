@@ -6918,7 +6918,16 @@ class TechScreen(Screen):
         self.sig = None
 
     def on_show(self):
+        box = self.app.cards
+        box.compute_rate(self.app)
+        gain = box.earn(offline=True)
+        if gain >= 1:
+            hud("Tes cartes ont rapporté +%s pièces" % big(gain), "success", 1.5)
+        box.save()
         self.build()
+
+    def on_hide(self):
+        self.app.cards.save()
 
     def layout(self):
         self.scroll.frame = (0, 0, self.width, self.height)
