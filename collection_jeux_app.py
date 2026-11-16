@@ -103,7 +103,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.60 (16/11/2026)"
+APP_VERSION = "3.61 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -3345,11 +3345,23 @@ class App:
             p = self.price(label, game)
             d = self.wish_delta(label, game)
             out.append((label, game, p["mid"] if p else None, d[1] if d else 0.0))
-        out.sort(key=lambda x: (x[3], x[1]))
+        out.sort(key=lambda x: (not self.target_hit(x[0], x[1]), x[3], x[1]))
         return out
 
+    def wish_target(self, label, game):
+        rec = self.coll.wish.get(key_of(label, game)) or {}
+        t = rec.get("target")
+        return t if isinstance(t, (int, float)) and not isinstance(t, bool) else None
+
+    def target_hit(self, label, game):
+        """Le prix est descendu au prix cible (ou en dessous) ?"""
+        t = self.wish_target(label, game)
+        p = self.price(label, game)
+        return bool(t is not None and p and p["mid"] <= t)
+
     def wish_drops(self):
-        return sum(1 for x in self.wish_list() if x[3] <= -0.5)
+        return sum(1 for x in self.wish_list()
+                   if x[3] <= -0.5 or self.target_hit(x[0], x[1]))
 
     def save(self):
         err = self.coll.save()
@@ -5653,6 +5665,9 @@ class MyGamesScreen(Screen):
         self.background_color = t["bg"]
         self.sort = 0
         self.bar_button = ("Exporter", lambda s: self.export())
+        self.dice = make_button("🎲  À quoi jouer ? (un de mes jeux au hasard)", (0, 0, 10, 10),
+                                lambda s: self.random_game(), t["card"], t["accent"], 13)
+        self.add_subview(self.dice)
         self.ctrl = ui.SegmentedControl()
         self.ctrl.segments = self.SORTS
         self.ctrl.selected_index = 0
@@ -5667,6 +5682,14 @@ class MyGamesScreen(Screen):
 
     def on_show(self):
         self.build()
+
+    def random_game(self):
+        games = self.games()
+        if not games:
+            return
+        label, g = random.choice(games)[:2]
+        haptic()
+        self.nav.push(DetailScreen(self.app, self.nav, label, g))
 
     def export(self):
         """Tableau complet de la collection (CSV : Numbers, Excel, Google Sheets)."""
@@ -5707,7 +5730,8 @@ class MyGamesScreen(Screen):
     def layout(self):
         w, h = self.width, self.height
         self.ctrl.frame = (10, 8, w - 20, 30)
-        self.scroll.frame = (0, 46, w, max(0, h - 46))
+        self.dice.frame = (10, 46, w - 20, 36)
+        self.scroll.frame = (0, 90, w, max(0, h - 90))
         self.build()
 
     def scrollview_did_scroll(self, sv):
@@ -6125,6 +6149,11 @@ class WishScreen(Screen):
             box.add_subview(make_label(eur(price) if price else "…", (cw - 120, by + 4, 108, 18),
                                        15, True, t["text"], "right"))
             txt, dcol = wish_text((0, diff))
+            target = app.wish_target(label, game)
+            if app.target_hit(label, game):
+                txt, dcol = "🎯 prix cible atteint", UP
+            elif target is not None and not txt:
+                txt, dcol = "🎯 ≤ %s" % eur_short(target), t["sub"]
             if txt:
                 box.add_subview(make_label(txt, (cw - 120, by + 22, 108, 14), 11, True, dcol,
                                            "right"))
@@ -6252,6 +6281,16 @@ class DetailScreen(Screen):
                     eur(d[0]), txt),
                     (pad, y, w - 2 * pad, 16), 12, True, col if txt else t["sub"], "center"))
                 y += 22
+            if wished:
+                target = app.wish_target(label, game)
+                hit = app.target_hit(label, game)
+                sv.add_subview(make_button(
+                    ("🎯 Prix cible atteint ! (≤ %s)" % eur(target)) if hit else
+                    ("🎯 Prix cible : %s" % eur(target)) if target is not None else
+                    "🎯 Définir un prix cible", (pad, y, w - 2 * pad, 34),
+                    lambda s: self.ask_target(), UP if hit else t["card"],
+                    "white" if hit else t["sub"], 13))
+                y += 40
             y += 4
 
         # --- exemplaires et note (jeux possédés)
@@ -6445,6 +6484,33 @@ class DetailScreen(Screen):
         self.app.save()
         self.app.notify(self.label, self.game)
         hud("Prix enregistré", "success", 0.8)
+
+    @background
+    def ask_target(self):
+        key = key_of(self.label, self.game)
+        cur = self.app.wish_target(self.label, self.game)
+        try:
+            txt = console.input_alert("Prix cible", "Préviens-moi quand le prix descend à "
+                                      "(en €, vide = effacer)",
+                                      ("%.2f" % cur).replace(".", ",") if cur is not None else "",
+                                      "Enregistrer")
+        except KeyboardInterrupt:
+            return
+        with self.app.coll.lock:
+            rec = self.app.coll.wish.get(key)
+            if rec is None:
+                return
+            if not (txt or "").strip():
+                rec.pop("target", None)
+            else:
+                try:
+                    rec["target"] = parse_euros(txt)
+                except ValueError:
+                    alert("Prix invalide", "Écris un nombre positif, par exemple 12,50.")
+                    return
+        log("Action : prix cible %s | %s" % (self.label, self.game))
+        self.app.save()
+        self.app.notify(self.label, self.game)
 
     def change_copies(self, step):
         n = max(1, self.app.coll.copies(self.label, self.game) + step)
