@@ -87,7 +87,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.66 (16/11/2026)"
+APP_VERSION = "3.67 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -6118,6 +6118,27 @@ class WishScreen(Screen):
         self.scroll.frame = (0, 0, self.width, self.height)
         self.build()
 
+    def share_text(self):
+        """Ma liste de souhaits en texte (idées de cadeaux à envoyer)."""
+        lines = ["Ma liste de souhaits – jeux vidéo", ""]
+        by = collections.OrderedDict()
+        for label, game, price, _ in sorted(self.app.wish_list(),
+                                            key=lambda x: (LABELS.index(x[0]), x[1])):
+            by.setdefault(label, []).append((game, price))
+        for label, games in by.items():
+            lines.append(FULL_NAME[label] + " :")
+            for game, price in games:
+                lines.append("• %s%s" % (game, " (environ %s)" % eur_short(price) if price
+                                         else ""))
+            lines.append("")
+        return "\n".join(lines).strip()
+
+    @background
+    def share(self):
+        import dialogs
+        log("Action : partage de la liste de souhaits")
+        dialogs.share_text(self.share_text())
+
     def build(self):
         app, t, sv = self.app, self.app.theme, self.scroll
         for v in list(sv.subviews):
@@ -6137,6 +6158,9 @@ class WishScreen(Screen):
                                     (16, 12, cw - 32, 26), 20, True, t["text"]))
         head.add_subview(make_label("Budget estimé : %s" % eur(total), (16, 42, cw - 32, 20),
                                     14, False, t["sub"]))
+        if items:
+            head.add_subview(make_button("Partager", (cw - 104, 22, 90, 34),
+                                         lambda s: self.share(), "#ff2d55", "white", 13))
         sv.add_subview(head)
         y += 78 + 16
         if not items:
