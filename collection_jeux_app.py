@@ -53,7 +53,9 @@ DATA_FILE = os.path.join(DOCS, "collection_jeux.json")
 LEGACY_FILE = os.path.join(DOCS, "collection_ps2.json")
 CACHE_FILE = os.path.join(DOCS, "prix_cache.json")
 CSV_FILE = os.path.join(DOCS, "valeur_collection.csv")
-CARDS_FILE = os.path.join(DOCS, "cartes_jeux.json")              # jeu de cartes (boosters)
+CARDS_FILE = os.path.join(DOCS, "cartes_jeux.json")              # jeu de cartes : partie 1
+CARDS_SLOTS = 3                                                 # nombre de parties
+CARDS_ACTIVE = os.path.join(DOCS, ".cartes_partie")             # partie en cours
 EXPORT_FILE = os.path.join(DOCS, "ma_collection.csv")           # export complet (tableur)
 HISTORY_FILE = os.path.join(DOCS, "valeur_historique.json")  # valeur de la collection par jour
 BADGES_FILE = os.path.join(DOCS, "succes_collection.json")      # succès déjà débloqués
@@ -88,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.71 (16/11/2026)"
+APP_VERSION = "3.72 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -1183,6 +1185,11 @@ def read_collection_file(path):
     return None
 
 
+def cards_path(slot):
+    """Fichier d'une partie du jeu de cartes (la partie 1 garde le nom d'origine)."""
+    return CARDS_FILE if slot <= 1 else CARDS_FILE.replace(".json", "_%d.json" % slot)
+
+
 def icloud_dir():
     """Dossier de sauvegarde dans iCloud Drive, ou None si iCloud n'est pas disponible."""
     for d in ICLOUD_DIRS:
@@ -1198,7 +1205,7 @@ def icloud_backup():
         return None
     try:
         os.makedirs(d, exist_ok=True)
-        for src in (DATA_FILE, HISTORY_FILE, CARDS_FILE):
+        for src in [DATA_FILE, HISTORY_FILE] + [cards_path(i + 1) for i in range(CARDS_SLOTS)]:
             if os.path.exists(src):
                 tmp = os.path.join(d, os.path.basename(src) + ".tmp")
                 shutil.copyfile(src, tmp)
@@ -2933,7 +2940,7 @@ class App:
         self.added_dirty = False  # prix d'ajout figés à enregistrer
         self.history = ValueHistory()
         self.price_history = PriceHistory()
-        self.cards = CardBox()
+        self.cards = CardBox(active_slot())
         self.bg_paused = False    # chargement en pause car l'app est en arrière-plan
         self.awake = False        # écran maintenu allumé pendant un gros chargement
         self.safe_mode = False    # démarrage sans chargement (après plantages répétés)
@@ -4122,7 +4129,7 @@ class HomeScreen(Screen):
         y += 248 + pad
         sv.add_subview(make_button("🃏  Jeu de cartes : tape, ouvre des boosters !",
                                    (pad, y, w - 2 * pad, 46),
-                                   lambda s: self.nav.push(CardsScreen(self.app, self.nav)),
+                                   lambda s: self.nav.push(GameMenuScreen(self.app, self.nav)),
                                    "#8e44ad", "white", 15))
         y += 46 + pad
         # --- derniers ajouts (jaquettes)
@@ -6294,8 +6301,10 @@ def big(n):
 class CardBox:
     """Mes cartes, mes pièces et mes améliorations (Documents/cartes_jeux.json)."""
 
-    def __init__(self):
-        raw = read_json(CARDS_FILE)
+    def __init__(self, slot=1):
+        self.slot = slot
+        self.path = cards_path(slot)
+        raw = read_json(self.path)
         raw = raw if isinstance(raw, dict) else {}
 
         def num(key, default, kind=float):
@@ -6329,7 +6338,7 @@ class CardBox:
     def save(self):
         self.last_save = time.time()
         try:
-            write_json(CARDS_FILE, {"coins": round(self.coins, 2), "cards": self.cards,
+            write_json(self.path, {"coins": round(self.coins, 2), "cards": self.cards,
                                     "var": self.var, "up": self.up, "daily": self.daily,
                                     "tech": sorted(self.tech),
                                     "free": self.free, "opened": self.opened,
@@ -6627,6 +6636,179 @@ def shake(view, done, turns=5):
     step(0)
 
 
+# ---------------------------------------------------------------- parties (sauvegardes)
+def active_slot():
+    d = read_json(CARDS_ACTIVE)
+    n = d.get("slot") if isinstance(d, dict) else None
+    return n if isinstance(n, int) and 1 <= n <= CARDS_SLOTS else 1
+
+
+def slot_info(slot):
+    """Résumé d'une partie : None si elle est vide, sinon (pièces, cartes, boosters,
+    technologies, date)."""
+    path = cards_path(slot)
+    d = read_json(path)
+    if not isinstance(d, dict):
+        return None
+    cards = d.get("cards") if isinstance(d.get("cards"), dict) else {}
+    tech = d.get("tech") if isinstance(d.get("tech"), list) else []
+    coins = d.get("coins") if isinstance(d.get("coins"), (int, float)) else 0
+    opened = d.get("opened") if isinstance(d.get("opened"), int) else 0
+    if not cards and not tech and not opened and coins < 1 and not d.get("taps"):
+        return None
+    try:
+        when = time.strftime("%d/%m %H:%M", time.localtime(os.path.getmtime(path)))
+    except OSError:
+        when = ""
+    return coins, len(cards), opened, len(tech), when
+
+
+def slot_text(slot):
+    info = slot_info(slot)
+    if not info:
+        return "vide"
+    return "🪙 %s  •  %d cartes  •  %s  •  %d techno." % (
+        big(info[0]), info[1], plural(info[2], "booster"), info[3])
+
+
+def use_slot(app, slot, new=False):
+    """Passe sur une partie (en enregistrant celle en cours) ; new = la remet à zéro."""
+    app.cards.save()
+    if new:
+        try:
+            os.remove(cards_path(slot))
+        except OSError:
+            pass
+    app.cards = CardBox(slot)
+    app.cards.ts = time.time() if new else app.cards.ts
+    app.cards.save()
+    try:
+        write_json(CARDS_ACTIVE, {"slot": slot})
+    except OSError:
+        pass
+    log("Cartes : %s partie %d" % ("nouvelle" if new else "chargement de la", slot))
+
+
+@guard_class
+class GameMenuScreen(Screen):
+    """Menu du jeu : Continuer, Nouvelle partie, Charger une partie."""
+    screen_title = "Chasse aux boosters"
+
+    def __init__(self, app, nav):
+        super().__init__()
+        self.app, self.nav = app, nav
+        self.background_color = app.theme["bg"]
+        self.mode = "menu"          # « menu », « nouvelle » ou « charger »
+        self.logo = None
+
+    def on_show(self):
+        self.mode = "menu"
+        self.app.cards.save()
+        self.build()
+
+    def layout(self):
+        self.build()
+
+    def play(self):
+        self.nav.push(CardsScreen(self.app, self.nav))
+
+    def set_mode(self, mode):
+        self.mode = mode
+        self.build()
+
+    def pick(self, slot):
+        if self.mode == "charger":
+            if not slot_info(slot) and slot != self.app.cards.slot:
+                hud("Cette partie est vide", "error", 1.0)
+                return
+            use_slot(self.app, slot)
+            haptic()
+            self.play()
+        elif slot_info(slot):
+            self.confirm_new(slot)
+        else:
+            self.start_new(slot)
+
+    @background
+    def confirm_new(self, slot):
+        try:
+            console.alert("Remplacer la partie %d ?" % slot,
+                          "%s\n\nCette partie sera effacée." % slot_text(slot), "Effacer et "
+                          "recommencer")
+        except KeyboardInterrupt:
+            return
+        on_main(self.start_new, slot)
+
+    def start_new(self, slot):
+        use_slot(self.app, slot, new=True)
+        haptic(2)
+        self.play()
+
+    def build(self):
+        for v in list(self.subviews):
+            self.remove_subview(v)
+        w, h = self.width, self.height
+        if w < 50:
+            return
+        app, t = self.app, self.app.theme
+        self.add_subview(gradient_view((0, 0, w, min(h, 420)), "#8e44ad", 0, 0.6))
+        y = max(20, h * 0.07)
+        self.logo = make_label("🃏", (0, y, w, 70), 60, False, t["text"], "center")
+        self.add_subview(self.logo)
+        self.add_subview(make_label("CHASSE AUX BOOSTERS", (0, y + 74, w, 36), 26, True, t["text"],
+                                    "center"))
+        self.add_subview(make_label("Tape, ouvre des boosters, collectionne tous les jeux",
+                                    (20, y + 112, w - 40, 18), 13, False, t["sub"], "center"))
+        y += 160
+        bw = min(w - 60, 340)
+        x = (w - bw) / 2
+        if self.mode == "menu":
+            cur = app.cards.slot
+            has = bool(slot_info(cur))
+            self.add_subview(make_button("▶  Continuer" if has else "▶  Jouer", (x, y, bw, 58),
+                                         lambda s: self.play(), "#34c759", "white", 20))
+            self.add_subview(make_label("Partie %d  •  %s" % (cur, slot_text(cur)),
+                                        (10, y + 62, w - 20, 16), 11, False, t["sub"],
+                                        "center"))
+            y += 58 + 34
+            self.add_subview(make_button("✚  Nouvelle partie", (x, y, bw, 50),
+                                         lambda s: self.set_mode("nouvelle"), t["card"],
+                                         t["accent"], 17))
+            y += 50 + 12
+            self.add_subview(make_button("📂  Charger une partie", (x, y, bw, 50),
+                                         lambda s: self.set_mode("charger"), t["card"],
+                                         t["accent"], 17))
+            pulse(self.logo, 1.25, 0.5)
+            return
+        self.add_subview(make_label("Nouvelle partie : choisis un emplacement"
+                                    if self.mode == "nouvelle" else
+                                    "Charger : choisis une partie", (10, y, w - 20, 22), 16,
+                                    True, t["text"], "center"))
+        y += 34
+        for slot in range(1, CARDS_SLOTS + 1):
+            info = slot_info(slot)
+            active = slot == app.cards.slot
+            row = ui.View(frame=(x, y, bw, 70), background_color=t["card"])
+            row.corner_radius = 14
+            row.border_width = 2 if active else 0
+            row.border_color = "#34c759"
+            row.alpha = 1.0 if (info or self.mode == "nouvelle" or active) else 0.5
+            row.add_subview(make_label("Partie %d%s" % (slot, "  (en cours)" if active else ""),
+                                       (14, 8, bw - 28, 20), 16, True, t["text"]))
+            row.add_subview(make_label(slot_text(slot), (14, 30, bw - 28, 16), 11, False,
+                                       t["sub"]))
+            row.add_subview(make_label(("jouée le " + info[4]) if info else
+                                       "emplacement libre", (14, 48, bw - 28, 14), 10, False,
+                                       t["sub"]))
+            b = ui.Button(frame=(0, 0, bw, 70))
+            b.action = lambda s, n=slot: self.pick(n)
+            row.add_subview(b)
+            self.add_subview(row)
+            y += 80
+        self.add_subview(make_button("‹ Retour au menu", (x, y + 4, bw, 40),
+                                     lambda s: self.set_mode("menu"), t["bg"], t["sub"], 14))
+
+
 @guard_class
 class CardsScreen(Screen):
     """Le jeu : on tape pour des pièces, on achète des boosters et des améliorations."""
@@ -6918,16 +7100,7 @@ class TechScreen(Screen):
         self.sig = None
 
     def on_show(self):
-        box = self.app.cards
-        box.compute_rate(self.app)
-        gain = box.earn(offline=True)
-        if gain >= 1:
-            hud("Tes cartes ont rapporté +%s pièces" % big(gain), "success", 1.5)
-        box.save()
         self.build()
-
-    def on_hide(self):
-        self.app.cards.save()
 
     def layout(self):
         self.scroll.frame = (0, 0, self.width, self.height)
