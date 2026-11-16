@@ -88,6 +88,7 @@ BACKUP_EVERY = 3600         # sauvegarde automatique au plus toutes les heures
 
 CACHE_VERSION = 3           # change si le format du cache change (l'ancien est ignoré)
 CACHE_TTL = 30 * 24 * 3600  # un prix est gardé 30 jours (les cotes bougent peu)
+FOLLOW_TTL = 3 * 24 * 3600  # jeux possédés / souhaités : prix rafraîchi tous les 3 jours
 BULK_PAGES = 4              # chargement rapide : pages « liste de la console » lues (150 jeux/page)
 ERR_TTL = 6 * 3600          # jeu introuvable : nouvel essai automatique 6 h plus tard
 RETRY_SOON = 5 * 60         # erreur passagère (réseau, anti-robot) : nouvel essai 5 min plus tard
@@ -100,7 +101,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.48 (16/11/2026)"
+APP_VERSION = "3.49 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -2355,7 +2356,7 @@ class PriceCache:
         e = self.get(key)
         return self.has_price(e) and time.time() - e.get("ts", 0) <= CACHE_TTL
 
-    def needs_fetch(self, key):
+    def needs_fetch(self, key, ttl=CACHE_TTL):
         e = self.get(key)
         if not e or e.get("v") != CACHE_VERSION:
             return True
@@ -2372,7 +2373,7 @@ class PriceCache:
             if now - err_ts < wait:
                 return False
         if self.has_price(e):
-            return now - e.get("ts", 0) > CACHE_TTL
+            return now - e.get("ts", 0) > ttl
         return True
 
     # -------------------------------------------------- taux de change
@@ -3321,9 +3322,10 @@ class App:
         self.wake.set()
 
     # ---------------------------------------------------------- chargement automatique
-    def _needs(self, label, game, full=False):
+    def _needs(self, label, game, full=False, ttl=CACHE_TTL):
         key = key_of(label, game)
-        if not full and not self.prices.get(key) and self.full.row(label, game):
+        if not full and ttl == CACHE_TTL and not self.prices.get(key) and \
+                self.full.row(label, game):
             return False   # prix déjà donné par la liste du catalogue complet
         if full:
             e = self.prices.get(key)
@@ -3331,7 +3333,7 @@ class App:
                 return False
             err_ts = (e or {}).get("err_ts")
             return not (isinstance(err_ts, (int, float)) and time.time() - err_ts < 120)
-        return self.prices.needs_fetch(key)
+        return self.prices.needs_fetch(key, ttl)
 
     def next_job(self):
         """(console, jeu, type) : fiche ouverte, puis jeux possédés, puis chargement
@@ -3340,11 +3342,11 @@ class App:
             return self.priority + (True,)
         for l in LABELS:
             for g in self.coll.owned_games(l):
-                if self._needs(l, g):
+                if self._needs(l, g, ttl=FOLLOW_TTL):     # mes jeux : prix suivis de près
                     return l, g, False
         for key in list(self.coll.wish):            # liste de souhaits : prix suivis
             l, _, g = key.partition("|")
-            if l in GAMES_BY and self._needs(l, g):
+            if l in GAMES_BY and self._needs(l, g, ttl=FOLLOW_TTL):
                 return l, g, False
         for l in ([self.focus] if self.focus in self.full_wanted else []) + \
                 sorted(self.full_wanted):
