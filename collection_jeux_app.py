@@ -102,7 +102,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.50 (16/11/2026)"
+APP_VERSION = "3.51 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -1287,6 +1287,8 @@ class Collection:
         self.urls = {}  # fiche PriceCharting choisie à la main : "PS2|jeu" -> url
         self.added = {}  # "PS2|jeu" -> {"ts": date d'ajout, "p": prix (€) à cette date}
         self.paid = {}   # prix payé par jeu : "PS2|jeu" -> €
+        self.qty = {}    # nombre d'exemplaires (si plus d'un)
+        self.notes = {}  # note libre par jeu
         self.wish = {}   # liste de souhaits : "PS2|jeu" -> {"ts": date, "p": prix à cette date}
         self.source = "fichier"
         self.last_backup = 0.0
@@ -1296,7 +1298,7 @@ class Collection:
         with self.lock:
             self.owned = {label: set() for label in LABELS}
             self.conditions, self.manual, self.urls, self.added = {}, {}, {}, {}
-            self.wish, self.paid = {}, {}
+            self.wish, self.paid, self.qty, self.notes = {}, {}, {}, {}
             self.load()
 
     def load(self):
@@ -1359,6 +1361,15 @@ class Collection:
         if isinstance(added, dict):
             self.added = {k: v for k, v in added.items()
                           if isinstance(k, str) and isinstance(v, dict)}
+        qty = data.get("_qty")
+        if isinstance(qty, dict):
+            self.qty = {k: int(v) for k, v in qty.items()
+                        if isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool)
+                        and 1 < v < 1000}
+        notes = data.get("_notes")
+        if isinstance(notes, dict):
+            self.notes = {k: v for k, v in notes.items()
+                          if isinstance(k, str) and isinstance(v, str) and v.strip()}
         paid = data.get("_paid")
         if isinstance(paid, dict):
             self.paid = {k: float(v) for k, v in paid.items()
@@ -1383,6 +1394,8 @@ class Collection:
             payload["_added"] = dict(self.added)
             payload["_wish"] = dict(self.wish)
             payload["_paid"] = dict(self.paid)
+            payload["_qty"] = dict(self.qty)
+            payload["_notes"] = dict(self.notes)
             try:
                 write_json(DATA_FILE, payload, indent=2)
             except OSError as e:
@@ -1416,6 +1429,16 @@ class Collection:
         """Jeux possédés de la sélection (pour la progression)."""
         s = self.owned[label]
         return sum(1 for g in GAMES_BY[label] if g in s)
+
+    def copies(self, label, game):
+        return self.qty.get(key_of(label, game), 1)
+
+    def set_copies(self, label, game, n):
+        with self.lock:
+            if n > 1:
+                self.qty[key_of(label, game)] = min(999, int(n))
+            else:
+                self.qty.pop(key_of(label, game), None)
 
     def is_wished(self, label, game):
         return key_of(label, game) in self.wish
@@ -3245,7 +3268,7 @@ class App:
         for g in self.coll.owned_games(label):
             p = self.price(label, g)
             if p:
-                total += p["mid"]
+                total += p["mid"] * self.coll.copies(label, g)   # plusieurs exemplaires
                 known += 1
         return total, known
 
@@ -3260,6 +3283,7 @@ class App:
                 self.coll.wish.pop(key, None)   # obtenu : sort de la liste de souhaits
             else:
                 self.coll.added.pop(key, None)
+                self.coll.qty.pop(key, None)
         log("Action : %s %s | %s" % ("ajout de" if now else "retrait de", label, game))
         self.save()
         self.notify(label, game)
@@ -5068,7 +5092,7 @@ def collection_stats(app):
             by_rarity[rar[1] if rar else "?"] += 1
             if not p:
                 continue
-            value += p["mid"]
+            value += p["mid"] * app.coll.copies(label, g)
             games.append((p["mid"], label, g, rar))
             d = app.delta(label, g)
             if d:
@@ -5088,7 +5112,7 @@ def collection_stats(app):
                 worth += p["mid"]
     return {"games": games, "consoles": by_console, "rarity": by_rarity,
             "spent": spent, "worth": worth,
-            "value": sum(x[0] for x in games), "paid": paid, "gain": gain,
+            "value": sum(x[0] for x in by_console), "paid": paid, "gain": gain,
             "count": sum(x[2] for x in by_console)}
 
 
@@ -5690,7 +5714,9 @@ class MyGamesScreen(Screen):
             row.add_subview(iv)
         elif url:
             app.covers.want(url)
-        row.add_subview(make_label(g, (56, 8, cw - 160, 20), 14, True, t["text"]))
+        n = app.coll.copies(label, g)
+        row.add_subview(make_label(g + ("  ×%d" % n if n > 1 else ""), (56, 8, cw - 160, 20), 14,
+                                   True, t["text"]))
         sub = FULL_NAME[label] + "  •  " + app.coll.condition(label, g)
         if self.sort == 2 and ts:
             sub = "ajouté le %s  •  %s" % (time.strftime("%d/%m/%Y", time.localtime(ts)), label)
@@ -6046,6 +6072,29 @@ class DetailScreen(Screen):
                 y += 22
             y += 4
 
+        # --- exemplaires et note (jeux possédés)
+        if owned:
+            n = app.coll.copies(label, game)
+            row = ui.View(frame=(pad, y, w - 2 * pad, 40), background_color=t["card"])
+            row.corner_radius = 10
+            row.add_subview(make_label("Exemplaires", (14, 0, 140, 40), 14, True, t["text"]))
+            row.add_subview(make_button("−", (w - 2 * pad - 132, 5, 40, 30),
+                                        lambda s: self.change_copies(-1), t["field"],
+                                        t["accent"], 18))
+            row.add_subview(make_label(str(n), (w - 2 * pad - 90, 0, 40, 40), 17, True,
+                                       t["text"], "center"))
+            row.add_subview(make_button("+", (w - 2 * pad - 48, 5, 40, 30),
+                                        lambda s: self.change_copies(1), t["field"],
+                                        t["accent"], 18))
+            sv.add_subview(row)
+            y += 48
+        note = app.coll.notes.get(key_of(label, game))
+        nb = make_button(("📝  " + note) if note else "📝  Ajouter une note",
+                         (pad, y, w - 2 * pad, 38), lambda s: self.ask_note(), t["card"],
+                         t["text"] if note else t["sub"], 13)
+        sv.add_subview(nb)
+        y += 46
+
         # --- condition
         sv.add_subview(make_label("Condition de mon exemplaire", (pad, y, w, 16), 12, False,
                                   t["sub"]))
@@ -6214,6 +6263,31 @@ class DetailScreen(Screen):
         self.app.save()
         self.app.notify(self.label, self.game)
         hud("Prix enregistré", "success", 0.8)
+
+    def change_copies(self, step):
+        n = max(1, self.app.coll.copies(self.label, self.game) + step)
+        self.app.coll.set_copies(self.label, self.game, n)
+        log("Action : %d exemplaire(s) %s | %s" % (n, self.label, self.game))
+        haptic()
+        self.app.save()
+        self.app.notify(self.label, self.game)
+
+    @background
+    def ask_note(self):
+        key = key_of(self.label, self.game)
+        try:
+            txt = console.input_alert("Note", "Ex. : acheté en brocante, boîte abîmée...",
+                                      self.app.coll.notes.get(key, ""), "Enregistrer")
+        except KeyboardInterrupt:
+            return
+        txt = (txt or "").strip()[:200]
+        with self.app.coll.lock:
+            if txt:
+                self.app.coll.notes[key] = txt
+            else:
+                self.app.coll.notes.pop(key, None)
+        self.app.save()
+        self.app.notify(self.label, self.game)
 
     @background
     def ask_paid(self):
