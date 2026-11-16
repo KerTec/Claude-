@@ -91,7 +91,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.41 (16/11/2026)"
+APP_VERSION = "3.42 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -4785,6 +4785,52 @@ def collection_stats(app):
             "count": sum(x[2] for x in by_console)}
 
 
+def share_card(app):
+    """Image « ma collection » à partager : valeur, jeux, top 6 avec jaquettes."""
+    st = collection_stats(app)
+    W, H = 360, 480
+    grad = gradient_image("#0a84ff", W, 220, 0, 0.55, 0.0)   # avant : pas de dessin imbriqué
+    with ui.ImageContext(W, H) as ctx:
+        ui.set_color("#0b0b12")
+        ui.fill_rect(0, 0, W, H)
+        if grad:
+            grad.draw(0, 0, W, 220)
+        ui.draw_string("MA COLLECTION DE JEUX", (20, 22, W - 40, 16),
+                       ("<System-Bold>", 12), (1, 1, 1, 0.7))
+        ui.draw_string(eur(st["value"]), (20, 42, W - 40, 44), ("<System-Bold>", 36),
+                       "white")
+        line = "%d jeu%s" % (st["count"], "x" if st["count"] > 1 else "")
+        if st["paid"] and abs(st["gain"]) >= 0.01:
+            txt, _ = delta_text((st["paid"], st["gain"]))
+            line += "   •   %s depuis l'ajout" % txt
+        ui.draw_string(line, (20, 92, W - 40, 18), ("<System>", 13), (1, 1, 1, 0.85))
+        # top 6 avec jaquettes
+        top = st["games"][:6]
+        cw_, ch_, gap = 100, 120, 10
+        x0 = (W - 3 * cw_ - 2 * gap) / 2
+        for i, (value, label, g, rar) in enumerate(top):
+            x = x0 + (i % 3) * (cw_ + gap)
+            y = 122 + (i // 3) * (ch_ + 40)
+            ui.set_color("#1c1c24")
+            ui.Path.rounded_rect(x, y, cw_, ch_, 10).fill()
+            url = app.cover_url(label, g)
+            img = load_image(app.covers.local(url)) if url else None
+            if img:
+                iw, ih = img.size
+                k = min((cw_ - 8) / float(iw), (ch_ - 8) / float(ih))
+                img.draw(x + (cw_ - iw * k) / 2, y + (ch_ - ih * k) / 2, iw * k, ih * k)
+            ui.draw_string(g, (x, y + ch_ + 3, cw_, 14), ("<System-Bold>", 10), "white",
+                           ui.ALIGN_CENTER, ui.LB_TRUNCATING_TAIL)
+            ui.draw_string("%s  •  %s" % (label, eur_short(value)), (x, y + ch_ + 18, cw_, 14),
+                           ("<System>", 10), rar[3] if rar else (1, 1, 1, 0.6), ui.ALIGN_CENTER)
+        # consoles
+        y = 122 + 2 * (ch_ + 40) + 2
+        names = ", ".join("%s %d" % (label, n) for _, label, n in st["consoles"][:6])
+        ui.draw_string(names, (20, y, W - 40, 30), ("<System>", 11), (1, 1, 1, 0.7),
+                       ui.ALIGN_CENTER)
+        return ctx.get_image()
+
+
 @guard_class
 class StatsScreen(Screen):
     screen_title = "Statistiques"
@@ -4793,6 +4839,7 @@ class StatsScreen(Screen):
         super().__init__()
         self.app, self.nav = app, nav
         self.background_color = app.theme["bg"]
+        self.bar_button = ("Partager", lambda s: self.share())
         self.scroll = ui.ScrollView()
         self.scroll.indicator_style = app.theme["indicator"]
         self.scroll.always_bounce_vertical = True
@@ -4805,6 +4852,21 @@ class StatsScreen(Screen):
     def layout(self):
         self.scroll.frame = (0, 0, self.width, self.height)
         self.build()
+
+    def share(self):
+        try:
+            img = share_card(self.app)
+        except Exception:
+            log_exception("Image de partage")
+            hud("Image impossible à créer", "error", 1.5)
+            return
+        log("Action : partage de l'image de la collection")
+        self._share(img)
+
+    @background
+    def _share(self, img):
+        import dialogs
+        dialogs.share_image(img)
 
     def section(self, title, y):
         t = self.app.theme
