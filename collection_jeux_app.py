@@ -102,7 +102,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.54 (16/11/2026)"
+APP_VERSION = "3.55 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -3085,10 +3085,20 @@ class App:
         reported = False
         started = time.time()
         stable = False
+        last_loop = time.time()
         while not self.closed:
             time.sleep(2)
             if self.closed:
                 break
+            now = time.time()
+            slept = now - last_loop
+            last_loop = now
+            if slept > 6 or self.in_background():
+                # iOS a mis toute l'app en pause (arrière-plan, écran verrouillé) :
+                # ce n'est pas un gel de l'interface, on repart de zéro.
+                self.heartbeat = now
+                reported = False
+                continue
             beats = getattr(self, "_beats", 0) + 1
             self._beats = beats
             if beats % 5 == 1:               # toutes les 10 s : « l'app est toujours en vie »
