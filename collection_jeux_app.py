@@ -45,6 +45,7 @@ import csv
 import glob
 import shutil
 import functools
+import gc
 import hashlib
 import html as htmllib
 import json
@@ -98,7 +99,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.46 (16/11/2026)"
+APP_VERSION = "3.47 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -3827,6 +3828,7 @@ class AppView(ui.View):
             s.run_due()
         if self.stack and hasattr(self.stack[-1], "idle"):
             self.stack[-1].idle()
+        gc_step(self.app, self.ticks)
 
     def switch_theme(self, style):
         """Change de thème en direct, sans relancer l'app."""
@@ -6489,11 +6491,38 @@ def write_marker(started):
         pass
 
 
+def gc_setup():
+    """Ramasse-miettes de Python : presque jamais automatique (il pouvait se déclencher
+    dans une tâche de fond et libérer des objets iOS au mauvais endroit : plantage dur
+    « Garbage-collecting / objc_util __del__ »). Il est fait à la main, sur le fil de
+    l'interface, par petites étapes (voir gc_step)."""
+    try:
+        gc.set_threshold(50000, 50, 1000)
+    except Exception:
+        pass
+
+
+def gc_step(app, ticks):
+    """Appelée 4 fois par seconde sur le fil de l'interface."""
+    try:
+        if ticks == 40:                       # ~10 s : démarrage fini
+            gc.collect()
+            gc.freeze()                       # objets du démarrage : plus jamais parcourus
+            log("Mémoire : nettoyage manuel activé")
+        elif ticks % 4 == 0:
+            gc.collect(0)                     # rapide (objets récents)
+        if ticks % 240 == 0 and time.time() > app.user_busy_until:
+            gc.collect()                      # complet, toutes les minutes, hors défilement
+    except Exception:
+        pass
+
+
 def main():
     try:
         sys.setswitchinterval(0.002)   # l'interface récupère la main plus vite
     except Exception:
         pass
+    gc_setup()
     install_crash_handlers()
     interrupted = os.path.exists(RUN_MARKER)
     previous = read_json(RUN_MARKER) if interrupted else None
