@@ -87,7 +87,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.65 (16/11/2026)"
+APP_VERSION = "3.66 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -2478,7 +2478,7 @@ def make_theme(style=None):
 def _rgba_key(color):
     """Couleur -> clé comparable (Pythonista rend les couleurs en tuples RGBA)."""
     try:
-        c = ui.parse_color(color) if isinstance(color, str) else tuple(color)
+        c = rgba(color) if isinstance(color, str) else tuple(color)
         return tuple(int(round(x * 255)) for x in c[:4])
     except Exception:
         return None
@@ -3670,15 +3670,24 @@ class Screen(ui.View):
 _GRAD_CACHE = {}
 
 
+def rgba(color):
+    """Couleur (nom, « #rrggbb » ou tuple) -> (r, v, b, a)."""
+    if isinstance(color, (tuple, list)):
+        return tuple(color) + ((1.0,) if len(color) == 3 else ())
+    return ui.parse_color(color)
+
+
 def gradient_image(color, w, h, radius=0, top=0.5, bottom=0.0):
     """Dégradé vertical (couleur -> transparent) aux coins arrondis, dessiné une seule
     fois (petite image en cache, échelle 1 : un dégradé n'a pas besoin de détails)."""
+    if not radius:
+        w = 4          # sans coins arrondis, une bande étroite étirée suffit (100× plus léger)
     key = (str(color), int(w), int(h), radius, top, bottom)
     if key in _GRAD_CACHE:
         return _GRAD_CACHE[key]
     img = None
     try:
-        c = ui.parse_color(color)
+        c = rgba(color)
         steps = max(2, int(h / 3))
         with ui.ImageContext(w, h, 1) as ctx:
             if radius:
@@ -3690,7 +3699,7 @@ def gradient_image(color, w, h, radius=0, top=0.5, bottom=0.0):
             img = ctx.get_image()
     except Exception:
         img = None
-    if len(_GRAD_CACHE) > 40:
+    if len(_GRAD_CACHE) > 24:
         _GRAD_CACHE.clear()
     _GRAD_CACHE[key] = img
     return img
@@ -3700,7 +3709,7 @@ def vivid(color):
     """Couleur éclaircie (le halo d'une jaquette sombre doit rester visible)."""
     try:
         import colorsys
-        c = ui.parse_color(color)
+        c = rgba(color)
         h, s, v = colorsys.rgb_to_hsv(c[0], c[1], c[2])
         r, g, b = colorsys.hsv_to_rgb(h, s, max(v, 0.75))
         return (r, g, b, 1.0)
@@ -3713,7 +3722,7 @@ def gradient_view(frame, color, radius=0, top=0.5, bottom=0.0):
     if img is None:                      # secours : teinte unie légère
         v = ui.View(frame=frame)
         try:
-            c = ui.parse_color(color)
+            c = rgba(color)
             v.background_color = (c[0], c[1], c[2], top * 0.4)
         except Exception:
             pass
@@ -4972,7 +4981,7 @@ def chart_image(points, w, h, color, text_color):
         return x, y
 
     try:
-        c = ui.parse_color(color)
+        c = rgba(color)
         with ui.ImageContext(w, h) as ctx:
             ui.set_color((c[0], c[1], c[2], 0.15))
             area = ui.Path()
