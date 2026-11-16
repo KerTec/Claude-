@@ -103,7 +103,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.61 (16/11/2026)"
+APP_VERSION = "3.62 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -6830,16 +6830,19 @@ class JournalScreen(Screen):
                           "tu pourras revenir en arrière." % choice, "Restaurer")
         except KeyboardInterrupt:
             return
+        # La sauvegarde choisie est lue AVANT de sauvegarder l'état actuel (sinon la copie
+        # iCloud serait remplacée par l'état actuel juste avant d'être relue).
+        data = read_collection_file(path) if kind == "backup" else None
+        if kind == "backup" and data is None:
+            alert("Sauvegarde illisible", os.path.basename(path))
+            return
         backup_collection("avant-restauration")
         coll = self.app.coll
         if kind == "backup":
-            data = read_collection_file(path)
-            if data is None:
-                alert("Sauvegarde illisible", os.path.basename(path))
-                return
             with coll.lock:
                 coll.owned = {label: set() for label in LABELS}
                 coll.conditions, coll.manual, coll.urls, coll.added = {}, {}, {}, {}
+                coll.wish, coll.paid, coll.qty, coll.notes = {}, {}, {}, {}
                 coll.apply(data)
         else:
             with coll.lock:
