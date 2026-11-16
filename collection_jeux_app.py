@@ -102,7 +102,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.53 (16/11/2026)"
+APP_VERSION = "3.54 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -2447,7 +2447,7 @@ RARITY = [  # (seuil minimum en €, nom, nombre d'étoiles, couleur)
     (50, "Très rare", 4, "#af52de"),
     (100, "Légendaire", 5, "#ff9f0a"),
 ]
-SORTS = ["N°", "Prix", "Rareté", "A–Z"]
+SORTS = ["N°", "Prix", "Rareté", "A–Z", "Ajout"]
 FILTERS = ["Tous", "Obtenus", "Manquants", "♥"]
 
 
@@ -4351,7 +4351,7 @@ class ConsoleScreen(Screen):
         if game is None and label is not None:
             self.later(self.rebuild, 1.0)       # catalogue complet : nouvelle page
             return
-        if label is None or self.sort_index in (1, 2) or self.filter_index:
+        if label is None or self.sort_index in (1, 2, 4) or self.filter_index:
             self.later(self.rebuild, 1.0)  # l'ordre ou le filtre peut changer
             return
         self.update_summary()
@@ -4483,6 +4483,14 @@ class ConsoleScreen(Screen):
             elif self.sort_index == 2:
                 lst.sort(key=lambda g: -((self.app.price(self.label, g, "Disque seul") or {})
                                          .get("mid") or -1))
+            elif self.sort_index == 4:      # derniers ajoutés d'abord, puis le reste
+                added = self.app.coll.added
+
+                def recent(g):
+                    rec = added.get(key_of(self.label, g))
+                    ts = rec.get("ts", 0) if isinstance(rec, dict) else 0
+                    return (not self.app.coll.is_owned(self.label, g), -ts, normalize(g))
+                lst.sort(key=recent)
             else:
                 lst.sort(key=normalize)
             items = [("g", g) for g in lst]
@@ -4716,6 +4724,8 @@ class Tile(ui.View):
         self.t_ok_box, self.t_ok = make_pill("✓", (0, 8, 26, 26), 15, t["owned"])
         self.t_ok_box.border_width = 2
         self.t_ok_box.border_color = "white"
+        self.t_qty_box, self.t_qty = make_pill("", (0, 0, 30, 20), 11, (0, 0, 0, 0.75),
+                                               radius=6)
         self.t_wish_box, _ = make_pill("♥", (0, 0, 24, 24), 13, "#ff2d55")
         self.t_wish_box.border_width = 2
         self.t_wish_box.border_color = "white"
@@ -4728,7 +4738,7 @@ class Tile(ui.View):
         self.t_btn = ui.Button()
         self.t_btn.action = lambda s: self.t_game and self.t_on_tap(self.t_game)
         for v in (self.t_ph, self.t_img, self.t_num_box, self.t_ok_box, self.t_title, self.t_price,
-                  self.t_stars, self.t_delta, self.t_rar, self.t_wish_box,
+                  self.t_stars, self.t_delta, self.t_rar, self.t_wish_box, self.t_qty_box,
                   self.t_btn):
             self.add_subview(v)
 
@@ -4739,6 +4749,7 @@ class Tile(ui.View):
         self.t_ok_box.frame = (w - 34, 8, 26, 26)
         self.t_rar.frame = (16, h - 6, w - 32, 3)
         self.t_wish_box.frame = (w - 33, cover_h - 30, 24, 24)
+        self.t_qty_box.frame = (w - 40, 38, 30, 20)
         soft_shadow(self, w, h, self.corner_radius)
         self.t_title.frame = (5, cover_h + 2, w - 10, 30)
         self.t_price.frame = (6, h - 22, w * 0.36, 15)
@@ -4769,6 +4780,9 @@ class Tile(ui.View):
         sv(self, "border_color", (rar[3] if rar else t["owned"]) if owned else t["line"])
         sv(self.t_num, "text", "#%03d" % app.num(label, game))
         sv(self.t_ok_box, "hidden", not owned)
+        n = app.coll.copies(label, game) if owned else 1
+        sv(self.t_qty_box, "hidden", n < 2)
+        sv(self.t_qty, "text", "×%d" % n)
         sv(self.t_wish_box, "hidden", owned or not app.coll.is_wished(label, game))
         sv(self.t_title, "text", game)
         sv(self.t_title, "font", ("<System-Bold>" if owned else "<System>", 11))
