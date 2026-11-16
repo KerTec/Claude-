@@ -2,41 +2,25 @@
 """
 Ma collection de jeux – un « Pokédex » de jeux vidéo pour Pythonista (iPhone / iPad)
 
-Consoles : PS2, N64, DS, 3DS, Xbox 360, Wii, GameCube, Switch.
+Ce fichier est le code de l'app. Il est téléchargé et lancé par le petit collection_jeux.py.
 
-Écrans :
-  * Accueil : une carte par console (progression, jeux obtenus, valeur).
-  * Console : grille de jaquettes numérotées. Obtenus = en couleur avec ✓,
-    manquants = en gris. Rareté ★ à ★★★★★ et prix sur chaque case.
-    Recherche, filtres (tous / obtenus / manquants), tri (n°, prix, rareté, A–Z),
-    mode « Toucher : cocher » pour cocher très vite.
-  * Fiche d'un jeu : grande jaquette, rareté, prix par condition, ventes récentes,
-    « Je l'ai », mon prix, eBay, Leboncoin, PriceCharting.
+Écrans : accueil (consoles par famille, derniers ajouts), grille d'une console, fiche d'un
+jeu, mes jeux, recherche, liste de souhaits, idées d'achat, statistiques, succès, journal.
 
-Prix et jaquettes (automatique, sans clé API) :
-  * Source : PriceCharting (versions PAL ; version US si le jeu n'est jamais sorti
-    en Europe). Dollars convertis en euros au taux du jour.
-  * Chargement en arrière-plan, un jeu à la fois (≈ 1 requête toutes les 4 s) :
-    fiche ouverte d'abord, puis console affichée, puis jeux possédés, puis le reste.
-    Premier lancement : ≈ 30 min pour tout le catalogue, ensuite gardé 30 jours.
-  * Prix = cote PriceCharting ; fourchette = ventes eBay récentes.
-  * Rareté = d'après la cote : Commun < 10 € ≤ Peu commun < 25 € ≤ Rare < 50 €
-    ≤ Très rare < 100 € ≤ Légendaire.
-  * Si le site bloque le script, bascule automatique sur un navigateur intégré.
-  * Mauvais jeu trouvé ? Fiche du jeu > « Corriger la fiche ».
+Prix et jaquettes : PriceCharting (PAL, sinon US), sans clé API, chargés en arrière-plan.
+Si le site bloque le script, bascule automatique sur un navigateur intégré.
 
 Fichiers (dans Documents/) :
-  collection_jeux.json      jeux possédés, conditions, prix saisis, fiches corrigées
+  collection_jeux.json      ma collection (jeux, états, prix payés, souhaits, notes...)
+  sauvegardes_collection/   copies de sécurité (+ copie dans iCloud Drive)
   prix_cache.json           prix déjà chargés
   jaquettes/                jaquettes téléchargées
-  valeur_collection.csv     export de la valeur de la collection
-  pricecharting_token.txt   clé API PriceCharting (facultative)
+  catalogue_complet/        tous les jeux de chaque console
+  valeur_historique.json, prix_historique.json   valeur et prix jour par jour
   journal_collection.txt    journal de bord (erreurs, événements)
   journal_plantages.txt     plantages durs de Pythonista
-  debug_pricecharting.html  dernière page non reconnue (pour diagnostic)
 
-Un problème ? Accueil > « Journal / signaler un problème » > « Copier le rapport »,
-puis colle-le dans la conversation.
+Un problème ? Accueil > « Journal / problème » > « Copier le rapport ».
 """
 
 import collections
@@ -103,7 +87,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.64 (16/11/2026)"
+APP_VERSION = "3.65 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -4453,13 +4437,13 @@ class ConsoleScreen(Screen):
         owned = self.app.coll.owned[self.label]
         rest = [self.app.price(self.label, g) for g in GAMES_BY[self.label] if g not in owned]
         cost = sum(p["mid"] for p in rest if p)
-        if rest and cost:
-            txt += "   •   reste %d ≈ %s" % (len(rest), eur_short(cost))
-        elif not rest:
-            txt += "   •   sélection complète 🏆"
-        if self.complete:
+        if self.complete:                 # une seule info à la fois : le texte doit tenir
             d = self.app.full.get(self.label)
-            txt += "   •   +%d jeux%s" % (len(d["rows"]), "" if d.get("done") else "…")
+            txt += "  •  +%d jeux%s" % (len(d["rows"]), "" if d.get("done") else "…")
+        elif rest and cost:
+            txt += "  •  reste %d ≈ %s" % (len(rest), eur_short(cost))
+        elif not rest:
+            txt += "  •  sélection complète 🏆"
         self.value_lbl.text = txt
         pct = got / float(total) if total else 0
         tw = self.track.width
@@ -5902,6 +5886,10 @@ class SearchScreen(Screen):
         self.add_subview(self.scroll)
 
     def on_show(self):
+        if getattr(self, "shown", False):    # retour d'une fiche : pas de clavier par-dessus
+            self.build()
+            return
+        self.shown = True
         try:
             self.field.begin_editing()
         except Exception:
