@@ -102,7 +102,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.55 (16/11/2026)"
+APP_VERSION = "3.56 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -2447,7 +2447,7 @@ RARITY = [  # (seuil minimum en €, nom, nombre d'étoiles, couleur)
     (50, "Très rare", 4, "#af52de"),
     (100, "Légendaire", 5, "#ff9f0a"),
 ]
-SORTS = ["N°", "Prix", "Rareté", "A–Z", "Ajout"]
+SORTS = ["N°", "Prix ↓", "Rareté", "A–Z", "Ajout", "Prix ↑"]
 FILTERS = ["Tous", "Obtenus", "Manquants", "♥"]
 
 
@@ -4361,7 +4361,7 @@ class ConsoleScreen(Screen):
         if game is None and label is not None:
             self.later(self.rebuild, 1.0)       # catalogue complet : nouvelle page
             return
-        if label is None or self.sort_index in (1, 2, 4) or self.filter_index:
+        if label is None or self.sort_index in (1, 2, 4, 5) or self.filter_index:
             self.later(self.rebuild, 1.0)  # l'ordre ou le filtre peut changer
             return
         self.update_summary()
@@ -4493,6 +4493,9 @@ class ConsoleScreen(Screen):
             elif self.sort_index == 2:
                 lst.sort(key=lambda g: -((self.app.price(self.label, g, "Disque seul") or {})
                                          .get("mid") or -1))
+            elif self.sort_index == 5:      # les moins chers d'abord (bonnes affaires)
+                lst.sort(key=lambda g: (self.app.price(self.label, g) or {}).get("mid")
+                         or 1e9)
             elif self.sort_index == 4:      # derniers ajoutés d'abord, puis le reste
                 added = self.app.coll.added
 
