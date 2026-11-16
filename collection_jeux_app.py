@@ -103,7 +103,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.63 (16/11/2026)"
+APP_VERSION = "3.64 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -3979,8 +3979,11 @@ class HomeScreen(Screen):
         total = sum(len(GAMES_BY[l]) for l in LABELS)
         value = sum(self.app.console_value(l)[0] for l in LABELS)
         count_lbl.text = "%d / %d jeux" % (owned, total)
-        self.app.history.record(value, self.app.coll.total())
-        self.app.price_history.record(self.app)
+        try:
+            self.app.history.record(value, self.app.coll.total())
+            self.app.price_history.record(self.app)
+        except Exception:
+            log_exception("Historique des prix")
         if getattr(self, "wish_btn", None):
             self.wish_btn.title = self.wish_title()
         value_lbl.text = "Valeur estimée : %s%s" % (eur(value), self.app.history.trend(value))
@@ -4929,7 +4932,13 @@ class PriceHistory:
 
     def __init__(self):
         raw = read_json(PRICE_HISTORY_FILE)
-        self.data = raw if isinstance(raw, dict) else {}
+        self.data = {}
+        if isinstance(raw, dict):           # fichier abîmé : on ne garde que ce qui est sain
+            for k, days in raw.items():
+                if isinstance(k, str) and isinstance(days, dict):
+                    self.data[k] = {d: v for d, v in days.items()
+                                    if isinstance(d, str) and isinstance(v, (int, float))
+                                    and not isinstance(v, bool)}
         self.last_write = 0.0
         self.day_done = None
 
@@ -6725,6 +6734,10 @@ def diagnostic(app):
             "%d (dernière : %s, %d jeux)" % (len(backups), time.strftime(
                 "%d/%m %H:%M", time.localtime(backups[0][1])), backups[0][2])
             if backups else "aucune"),
+        "Souhaits : %d   •   prix payés : %d   •   exemplaires en double : %d   •   notes : %d"
+        % (len(app.coll.wish), len(app.coll.paid), len(app.coll.qty), len(app.coll.notes)),
+        "Historique : %d jours de valeur, %d jeux suivis" % (len(app.history.days),
+                                                             len(app.price_history.data)),
         "Copie iCloud Drive : %s" % (
             "oui (%s)" % time.strftime("%d/%m %H:%M", time.localtime(
                 [b for b in backups if b[3] == "iCloud"][0][1]))
