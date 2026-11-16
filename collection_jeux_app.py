@@ -103,7 +103,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.62 (16/11/2026)"
+APP_VERSION = "3.63 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -5234,8 +5234,12 @@ class StatsScreen(Screen):
         self.scroll.always_bounce_vertical = True
         self.add_subview(self.scroll)
 
+    def on_show(self):
+        self.build()
+
     def on_data(self, label, game):
-        if not self.hidden:
+        # seuls mes jeux changent les statistiques (pas chaque prix du catalogue chargé)
+        if not self.hidden and (game is None or self.app.coll.is_owned(label, game)):
             self.later(self.build, 2.0)
 
     def layout(self):
@@ -5587,6 +5591,7 @@ def scan_lookup(app, nav, code):
     if not code:
         return
     log("Scanner : code %s" % code)
+    time.sleep(0.7)       # laisse la caméra se fermer avant d'afficher autre chose
     hud("Recherche du code %s..." % code, "success", 1.0)
     try:
         found = lookup_barcode(code)
@@ -5710,7 +5715,7 @@ class MyGamesScreen(Screen):
             alert("Export terminé", "Le fichier est dans Documents/ma_collection.csv.")
 
     def on_data(self, label, game):
-        if not self.hidden:
+        if not self.hidden and (game is None or self.app.coll.is_owned(label, game)):
             self.later(self.build, 1.5)
 
     def on_cover(self, url):
@@ -6100,7 +6105,7 @@ class WishScreen(Screen):
         self.build()
 
     def on_data(self, label, game):
-        if not self.hidden:
+        if not self.hidden and (game is None or self.app.coll.is_wished(label, game)):
             self.later(self.build, 1.0)
 
     def layout(self):
