@@ -102,7 +102,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.51 (16/11/2026)"
+APP_VERSION = "3.52 (16/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -3802,9 +3802,6 @@ class AppView(ui.View):
         self.layout()
         screen.on_show()
         self._update_bar()
-        if len(self.stack) > 1:
-            screen.alpha = 0.0
-            animate(lambda: setattr(screen, "alpha", 1.0), 0.18)
 
     def pop(self):
         if len(self.stack) <= 1:
