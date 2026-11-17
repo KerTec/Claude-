@@ -6962,7 +6962,6 @@ class CardsScreen(Screen):
             (self.tech_ready(),)
 
     def show_coins(self):
-        box = self.app.cards
         if self.coin_lbl is not None:
             full = box.coins >= box.cap()
             self.coin_lbl.text = "🪙 %s / %s%s" % (big(box.coins), big(box.cap()),
