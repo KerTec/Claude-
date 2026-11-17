@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.74 (17/11/2026)"
+APP_VERSION = "3.75 (17/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -6243,12 +6243,17 @@ class WishScreen(Screen):
 START_COINS = 0
 SELL_VALUE = [3, 8, 25, 80, 300]          # revente d'un doublon, par rareté
 PACK_ALL = "Toutes consoles"
-# sorte de booster : (nom, prix, chances des cartes, chances de la dernière, résistance)
+# sorte de booster : (nom, prix, cartes, chances, chances de la dernière carte,
+# résistance, couleur). Chaque booster peut contenir un jeu de n'importe quelle console.
 PACK_KINDS = [
-    ("Classique", 30, [60, 27, 9, 3, 1], [0, 60, 28, 9, 3], 20),
-    ("Premium", 400, [20, 45, 25, 8, 2], [0, 0, 70, 22, 8], 150),
-    ("Légende", 5000, [0, 30, 45, 18, 7], [0, 0, 0, 75, 25], 1000),
+    ("Free pack", 0, 2, [80, 15, 4, 0.9, 0.1], [80, 15, 4, 0.9, 0.1], 5, "#636366"),
+    ("Booster Bronze", 10, 3, [65, 25, 8, 1.7, 0.3], [40, 45, 12, 2.5, 0.5], 12, "#a0522d"),
+    ("Booster Argent", 150, 3, [45, 35, 15, 4, 1], [0, 60, 30, 8, 2], 40, "#8e8e93"),
+    ("Booster Or", 2000, 4, [20, 40, 28, 9, 3], [0, 0, 70, 22, 8], 150, "#d4a017"),
+    ("Booster Platine", 25000, 4, [0, 30, 45, 18, 7], [0, 0, 40, 45, 15], 500, "#0a84ff"),
+    ("Booster Diamant", 300000, 5, [0, 0, 50, 35, 15], [0, 0, 0, 65, 35], 1500, "#af52de"),
 ]
+SHOP_COSTS = [2, 60, 1500, 30000, 500000]     # prix des niveaux de « Boutique »
 # variante d'une carte : (nom, signe, chance en %, multiplicateur de vente, couleur)
 VARIANTS = [
     ("Normale", "", 88, 1, None),
@@ -6257,39 +6262,40 @@ VARIANTS = [
     ("Or", "👑", 1, 20, "#ffd60a"),
 ]
 INFLATION = 5        # nombre de boosters ouverts pour +1 % sur le prix des boosters
-TECH_PRICE = 1.75    # réglages globaux des prix de l'arbre (durée de vie du jeu) :
+TECH_PRICE = 1.2     # réglages globaux des prix de l'arbre (durée de vie du jeu) :
 TECH_GROWTH = 1.3    # prix de départ, et vitesse à laquelle les niveaux renchérissent
 # arbre d'améliorations :
 # (clé, branche, rang, nom, effet par niveau, prix de départ, hausse, niveau max, prérequis)
 TECH = [
-    ("v1", 0, 0, "Doigt musclé", "+1 pièce par tape", 20, 1.18, 50, []),
-    ("v2", 0, 1, "Stockage", "+1 place de doublon", 40, 1.15, 50, ["v1"]),
-    ("v3", 0, 2, "Demande", "+1 doublon vendu par vente", 150, 1.4, 20, ["v2"]),
-    ("v4", 0, 3, "Valeur", "+50 % sur la vente des cartes", 300, 1.35, 30, ["v3"]),
-    ("v5", 0, 4, "Coup critique", "+3 % de tapes critiques", 2000, 2.0, 10, ["v4"]),
-    ("v6", 0, 5, "Critique puissant", "critique : ×10, puis +5 par niveau", 6000, 1.9, 8,
+    ("s1", 1, 0, "Boutique", "+1 type de booster en vente", 2, 1.0, 5, []),
+    ("v1", 0, 1, "Doigt musclé", "bouton à taper : +1 pièce par tape", 20, 1.18, 50, ["s1"]),
+    ("v2", 0, 2, "Stockage", "+1 place de doublon", 15, 1.15, 50, ["v1"]),
+    ("v3", 0, 3, "Demande", "+1 doublon vendu par vente", 150, 1.4, 20, ["v2"]),
+    ("v4", 0, 4, "Valeur", "+50 % sur la vente des cartes", 300, 1.35, 30, ["v3"]),
+    ("v5", 0, 5, "Coup critique", "+3 % de tapes critiques", 2000, 2.0, 10, ["v4"]),
+    ("v6", 0, 6, "Critique puissant", "critique : ×10, puis +5 par niveau", 6000, 1.9, 8,
      ["v5"]),
-    ("v7", 0, 6, "Prime de rareté", "cartes Rare et plus : vente +100 %", 15000, 1.8, 10,
+    ("v7", 0, 7, "Prime de rareté", "cartes Rare et plus : vente +100 %", 15000, 1.8, 10,
      ["v6"]),
-    ("v8", 0, 7, "Recyclage", "doublon perdu : rend 10 % de sa valeur", 40000, 2.2, 5,
+    ("v8", 0, 8, "Recyclage", "doublon perdu : rend 10 % de sa valeur", 40000, 2.2, 5,
      ["v7"]),
-    ("b1", 1, 0, "Dégâts", "+1 dégât par tape sur un booster", 60, 1.25, 30, []),
-    ("b2", 1, 1, "Cartes", "+1 carte par booster", 500, 3.0, 6, ["b1"]),
-    ("b3", 1, 2, "Booster Premium", "débloque le booster Premium", 5000, 1.0, 1, ["b2"]),
-    ("b4", 1, 3, "Remise", "boosters −4 %", 1500, 1.8, 10, ["b3"]),
+    ("b1", 1, 1, "Dégâts", "+1 dégât par tape sur un booster", 10, 1.25, 30, ["s1"]),
+    ("b2", 1, 2, "Cartes", "+1 carte par booster", 200, 3.0, 4, ["b1"]),
+    ("b4", 1, 3, "Remise", "boosters −4 %", 1500, 1.8, 10, ["b2"]),
     ("b5", 1, 4, "Coup de masse", "+4 % de tapes ×5 sur un booster", 8000, 1.7, 10, ["b4"]),
-    ("b6", 1, 5, "Booster Légende", "débloque le booster Légende", 80000, 1.0, 1, ["b5"]),
-    ("b7", 1, 6, "Carte bonus", "+5 % de chance d'une carte en plus", 30000, 1.8, 10,
-     ["b6"]),
-    ("c1", 2, 0, "Trèfle", "plus de cartes rares", 400, 2.0, 10, []),
-    ("c2", 2, 1, "Chasseur", "+20 % de variantes rares", 1200, 2.0, 10, ["c1"]),
-    ("c3", 2, 2, "Livraison", "booster gratuit 20 min plus tôt", 2500, 2.0, 6, ["c2"]),
-    ("c4", 2, 3, "Bonus du jour", "+200 pièces de bonus", 800, 1.4, 20, ["c3"]),
-    ("c5", 2, 4, "Booster doré", "booster doré plus souvent (tous les 15, −1)", 10000, 1.9,
+    ("b7", 1, 5, "Carte bonus", "+5 % de chance d'une carte en plus", 30000, 1.8, 10,
+     ["b5"]),
+    ("c1", 2, 1, "Trèfle", "plus de cartes rares", 100, 2.0, 10, ["s1"]),
+    ("c2", 2, 2, "Chasseur", "+20 % de variantes rares", 1200, 2.0, 10, ["c1"]),
+    ("c3", 2, 3, "Free pack +", "le Free pack donne de meilleures cartes", 2500, 2.0, 6,
+     ["c2"]),
+    ("c4", 2, 4, "Aimant", "+4 % : un doublon devient une carte inconnue", 4000, 1.7, 10,
+     ["c3"]),
+    ("c5", 2, 5, "Booster doré", "booster doré plus souvent (tous les 15, −1)", 10000, 1.9,
      8, ["c4"]),
-    ("c6", 2, 5, "Prime de nouveauté", "des pièces pour chaque nouvelle carte", 20000, 1.8,
+    ("c6", 2, 6, "Prime de nouveauté", "nouvelle carte : encore plus de pièces", 20000, 1.8,
      10, ["c5"]),
-    ("m1", 1, 8, "Maître collectionneur", "tapes et ventes ×2", 500000, 1.0, 1,
+    ("m1", 1, 9, "Maître collectionneur", "tapes et ventes ×2", 500000, 1.0, 1,
      ["v8", "b7", "c6"]),
 ]
 TECH_BY = {t[0]: t for t in TECH}
@@ -6332,6 +6338,9 @@ class CardBox:
             for a, b in (("click", "v1"), ("luck", "c1")):
                 if old.get(a):
                     self.lv[b] = min(old[a], TECH_BY[b][7])
+        if self.lv and not self.lv.get("s1"):     # partie d'avant la « Boutique »
+            before = levels("lv")
+            self.lv["s1"] = 3 if before.get("b6") else (2 if before.get("b3") else 1)
         self.coins = num("coins", float(START_COINS))
         self.daily = raw.get("daily") if isinstance(raw.get("daily"), str) else ""
         self.free = num("free", 0.0)
@@ -6363,6 +6372,8 @@ class CardBox:
 
     def cost(self, key):
         t = TECH_BY[key]
+        if key == "s1":
+            return SHOP_COSTS[min(self.level(key), len(SHOP_COSTS) - 1)]
         return int(t[5] * t[6] ** (self.level(key) * TECH_GROWTH) * TECH_PRICE)
 
     def state(self, key):
@@ -6385,7 +6396,14 @@ class CardBox:
         return 2 if self.level("m1") else 1
 
     def click_power(self):
-        return (1 + self.level("v1")) * self.master()
+        return self.level("v1") * self.master()
+
+    def luck(self, kind):
+        """Trèfle, plus « Free pack + » pour le Free pack."""
+        return self.level("c1") + (2 * self.level("c3") if kind == 0 else 0)
+
+    def magnet_chance(self):
+        return 0.04 * self.level("c4")
 
     def crit_chance(self):
         return 0.03 * self.level("v5")
@@ -6419,14 +6437,16 @@ class CardBox:
     def damage(self):
         return 1 + self.level("b1")
 
-    def pack_size(self):
-        return 3 + self.level("b2")
+    def pack_size(self, kind=0):
+        return PACK_KINDS[kind][2] + self.level("b2")
 
     def unlocked(self, kind):
-        return kind == 0 or bool(self.level("b3" if kind == 1 else "b6"))
+        return kind <= self.level("s1")
 
     def price(self, kind):
         # les boosters renchérissent un peu à chaque ouverture (+1 % tous les INFLATION)
+        if not PACK_KINDS[kind][1]:
+            return 0
         return max(1, int(PACK_KINDS[kind][1] * (1 - 0.04 * self.level("b4"))
                           * (1 + self.opened / float(INFLATION) / 100.0)))
 
@@ -6462,8 +6482,8 @@ class CardBox:
             self.cards[key] = 1
             if var:
                 self.var[key] = var
-            self.coins += SELL_VALUE[card_tier(app, label, game)] * 2 * self.level("c6") * \
-                self.master()                                   # prime de nouveauté
+            self.coins += 1 + SELL_VALUE[card_tier(app, label, game)] * 2 * \
+                self.level("c6") * self.master()   # 1 pièce, plus la prime de nouveauté
             return "nouveau"
         if var > self.var.get(key, 0):
             self.var[key] = var
@@ -6523,22 +6543,28 @@ def pack_pool(app, family):
     return pool
 
 
-def draw_pack(app, family, kind=0, luck=0, rng=random, size=3, hunter=0, golden=False):
-    """Les cartes d'un booster : [(console, jeu, rareté, variante)]."""
-    pool = pack_pool(app, family)
-    odds, odds_last = PACK_KINDS[kind][2], PACK_KINDS[kind][3]
+def draw_pack(app, kind=0, luck=0, rng=random, size=None, hunter=0, golden=False,
+              owned=(), magnet=0.0):
+    """Les cartes d'un booster : [(console, jeu, rareté, variante)]. Toutes consoles."""
+    pool = pack_pool(app, PACK_ALL)
+    odds, odds_last = PACK_KINDS[kind][3], PACK_KINDS[kind][4]
+    size = PACK_KINDS[kind][2] if size is None else size
     out = []
     for i in range(size):
         base = odds_last if (golden or i == size - 1) else odds
         weights = [w * (1 + 0.15 * luck * t) for t, w in enumerate(base)]   # trèfle
         tier = rng.choices(range(5), weights=weights)[0]
-        while tier > 0 and not pool[tier]:       # pas de carte de cette rareté ici
+        while tier > 0 and not pool[tier]:       # pas de carte de cette rareté
             tier -= 1
         while tier < 4 and not pool[tier]:
             tier += 1
         if not pool[tier]:
             continue
         label, g = rng.choice(pool[tier])
+        if magnet and key_of(label, g) in owned and rng.random() < magnet:
+            unknown = [c for c in pool[tier] if key_of(c[0], c[1]) not in owned]
+            if unknown:                          # aimant : une carte que je n'ai pas
+                label, g = rng.choice(unknown)
         var = rng.choices(range(len(VARIANTS)),
                           weights=[v[2] * (1 + 0.2 * hunter if j else 1)
                                    for j, v in enumerate(VARIANTS)])[0]
@@ -6843,7 +6869,8 @@ class GameMenuScreen(Screen):
 
 @guard_class
 class CardsScreen(Screen):
-    """Le jeu : on tape pour des pièces, on vend ses doublons, on achète des boosters."""
+    """Le jeu : au début, un seul Free pack à déchirer. Les nouvelles cartes et la vente
+    des doublons donnent des pièces ; la boutique et l'arbre s'ouvrent peu à peu."""
     screen_title = "Boosters"
 
     def __init__(self, app, nav):
@@ -6855,8 +6882,7 @@ class CardsScreen(Screen):
         self.scroll.indicator_style = app.theme["indicator"]
         self.scroll.always_bounce_vertical = True
         self.add_subview(self.scroll)
-        self.free_btn = self.coin_lbl = self.tap_btn = self.sell_btn = self.stock_lbl = None
-        self.kind = 0
+        self.coin_lbl = self.tap_btn = self.sell_btn = self.stock_lbl = None
         self.floats = []
         self.ticks = 0
         self.afford = None
@@ -6873,10 +6899,7 @@ class CardsScreen(Screen):
         self.build()
 
     def idle(self):
-        """4 fois par seconde : minuteur du booster gratuit, boutons à jour."""
         self.ticks += 1
-        if self.free_btn is not None and self.ticks % 4 == 0:
-            self.free_btn.title = self.free_title()
         if self.ticks % 8 == 0:
             self.app.cards.save_soon()
             if self.afford != self.afford_sig():     # un achat devient possible
@@ -6893,15 +6916,8 @@ class CardsScreen(Screen):
             (self.tech_ready(),)
 
     def show_coins(self):
-        box = self.app.cards
         if self.coin_lbl is not None:
-            self.coin_lbl.text = "🪙 %s" % big(box.coins)
-
-    def free_title(self):
-        wait = self.app.cards.free_wait()
-        if not wait:
-            return "🎁  Booster gratuit disponible !"
-        return "Prochain booster gratuit dans %d h %02d min" % (wait // 3600, wait % 3600 // 60)
+            self.coin_lbl.text = "🪙 %s" % big(self.app.cards.coins)
 
     def floating(self, btn, text, color, size=18):
         now = time.time()                     # quelques textes à la fois, pas des dizaines
@@ -6915,6 +6931,8 @@ class CardsScreen(Screen):
     def tap(self):
         box = self.app.cards
         power = box.click_power()
+        if not power:
+            return
         crit = random.random() < box.crit_chance()
         if crit:
             power *= box.crit_mult()
@@ -6949,55 +6967,38 @@ class CardsScreen(Screen):
                 d, box.capacity(), "  (PLEIN)" if d >= box.capacity() else "")
             self.stock_lbl.text_color = DOWN if d >= box.capacity() else self.app.theme["sub"]
         if self.sell_btn is not None:
+            k = min(d, box.demand())
             self.sell_btn.title = "💰  Vendre %d doublon%s  (stock : %s)" % (
-                min(d, box.demand()), "s" if min(d, box.demand()) > 1 else "",
-                big(box.stock_value(self.app))) if d else "💰  Aucun doublon à vendre"
+                k, "s" if k > 1 else "", big(box.stock_value(self.app))) if d else \
+                "💰  Aucun doublon à vendre"
 
-    def claim(self):
-        bonus = self.app.cards.claim_daily()
-        if bonus:
-            haptic()
-            hud("+%s pièces" % big(bonus), "success", 1.0)
-            log("Cartes : bonus du jour")
-        self.build()
-
-    def set_kind(self, sender):
-        self.kind = sender.selected_index
-        self.build()
-
-    def open_pack(self, family, free=False):
+    def open_pack(self, kind):
         box = self.app.cards
-        kind = 0 if free else self.kind
         cost = box.price(kind)
-        if free:
-            if box.free_wait():
-                return
-            box.free = time.time()
-        elif not box.unlocked(kind):
-            hud("Débloque ce booster dans l'arbre d'améliorations", "error", 1.4)
+        if not box.unlocked(kind):
+            hud("Améliore la Boutique pour débloquer ce booster", "error", 1.4)
             return
-        elif box.coins < cost:
+        if box.coins < cost:
             hud("Pas assez de pièces (%s)" % big(cost), "error", 1.2)
             return
-        else:
-            box.coins -= cost
-        golden = box.is_golden()
-        size = box.pack_size() + (1 if random.random() < box.bonus_card_chance() else 0)
-        pack = draw_pack(self.app, family, kind, box.level("c1"), size=min(9, size),
-                         hunter=box.level("c2"), golden=golden)
+        box.coins -= cost
+        golden = kind > 0 and box.is_golden()
+        size = box.pack_size(kind) + (1 if random.random() < box.bonus_card_chance() else 0)
+        pack = draw_pack(self.app, kind, box.luck(kind), size=min(9, size),
+                         hunter=box.level("c2"), golden=golden,
+                         owned=box.cards, magnet=box.magnet_chance())
         status = [box.add_card(self.app, label, g, var) for label, g, _, var in pack]
         box.opened += 1
         box.save()                      # enregistré avant l'animation : rien n'est perdu
-        log("Cartes : booster %s %s%s -> %s" % (PACK_KINDS[kind][0], family,
-                                               " (gratuit)" if free else "",
-                                               ", ".join(g for _, g, _, _ in pack)))
-        self.nav.push(PackScreen(self.app, self.nav, family, pack, status, kind, golden))
+        log("Cartes : %s -> %s" % (PACK_KINDS[kind][0], ", ".join(g for _, g, _, _ in pack)))
+        self.nav.push(PackScreen(self.app, self.nav, pack, status, kind, golden))
 
     def build(self):
         app, t, sv = self.app, self.app.theme, self.scroll
         for v in list(sv.subviews):
             sv.remove_subview(v)
         self.floats = []
+        self.tap_btn = self.sell_btn = self.stock_lbl = None
         w = self.width
         if w < 50:
             return
@@ -7018,98 +7019,70 @@ class CardsScreen(Screen):
             "s" if box.opened > 1 else ""), (16, 46, cw - 32, 18), 13, False, t["sub"]))
         sv.add_subview(head)
         y += 78 + 12
-        # --- taper et vendre
-        self.tap_btn = make_button("🎮  Tape ici !  +%s" % big(box.click_power()),
-                                   (pad + 20, y, cw - 40, 96), lambda s: self.tap(),
-                                   "#8e44ad", "white", 22)
-        self.tap_btn.corner_radius = 26
-        sv.add_subview(self.tap_btn)
-        y += 96 + 12
-        self.sell_btn = make_button("", (pad + 20, y, cw - 40, 56), lambda s: self.sell(),
-                                    "#34c759", "white", 15)
-        self.sell_btn.corner_radius = 18
-        sv.add_subview(self.sell_btn)
-        y += 56 + 6
-        self.stock_lbl = make_label("", (pad, y, cw, 16), 12, True, t["sub"], "center")
-        sv.add_subview(self.stock_lbl)
-        self.show_stock()
-        y += 16 + 14
-        # --- arbre d'améliorations
-        ready = self.tech_ready()
-        done = sum(box.lv.values())
-        sv.add_subview(make_button(
-            "🌳  Améliorations  (%d niveaux)%s" % (
-                done, "  •  %d à acheter !" % ready if ready else ""),
-            (pad, y, cw, 46), lambda s: self.nav.push(TechScreen(self.app, self.nav)),
-            "#ff9f0a" if ready else t["card"], "white" if ready else t["accent"], 14))
-        y += 46 + 10
-        if box.daily_ready():
-            sv.add_subview(make_button("☀️  Bonus du jour : +%s pièces" % big(
-                box.daily_bonus()), (pad, y, cw, 42), lambda s: self.claim(), "#0a84ff",
-                "white", 15))
-            y += 42 + 10
-        ready = not box.free_wait()
-        self.free_btn = make_button(self.free_title(), (pad, y, cw, 42),
-                                    lambda s: self.open_pack(PACK_ALL, free=True),
-                                    "#ff2d55" if ready else t["card"],
-                                    "white" if ready else t["sub"], 14)
-        sv.add_subview(self.free_btn)
-        y += 42 + 18
-        # --- boosters
-        sv.add_subview(make_label("BOOSTERS  (%s, %d dégât%s par tape)" % (
-            plural(box.pack_size(), "carte"), box.damage(), "s" if box.damage() > 1 else ""),
-            (pad + 2, y, cw, 18), 13, True, t["sub"]))
+        # --- taper (une fois « Doigt musclé » acheté)
+        if box.click_power():
+            self.tap_btn = make_button("🎮  Tape ici !  +%s" % big(box.click_power()),
+                                       (pad + 20, y, cw - 40, 84), lambda s: self.tap(),
+                                       "#8e44ad", "white", 22)
+            self.tap_btn.corner_radius = 26
+            sv.add_subview(self.tap_btn)
+            y += 84 + 12
+        # --- vendre (dès le premier doublon)
+        if box.doubles() or box.sold:
+            self.sell_btn = make_button("", (pad + 20, y, cw - 40, 56), lambda s: self.sell(),
+                                        "#34c759", "white", 15)
+            self.sell_btn.corner_radius = 18
+            sv.add_subview(self.sell_btn)
+            y += 56 + 6
+            self.stock_lbl = make_label("", (pad, y, cw, 16), 12, True, t["sub"], "center")
+            sv.add_subview(self.stock_lbl)
+            self.show_stock()
+            y += 16 + 14
+        # --- améliorations (dès la première pièce)
+        if box.coins >= 1 or box.lv:
+            ready = self.tech_ready()
+            sv.add_subview(make_button(
+                "🌳  Améliorations%s" % ("  •  %d à acheter !" % ready if ready else ""),
+                (pad, y, cw, 46), lambda s: self.nav.push(TechScreen(self.app, self.nav)),
+                "#ff9f0a" if ready else t["card"], "white" if ready else t["accent"], 14))
+            y += 46 + 16
+        # --- boutique : les boosters débloqués, puis le prochain (verrouillé)
+        sv.add_subview(make_label("BOUTIQUE", (pad + 2, y, cw, 18), 13, True, t["sub"]))
         y += 24
-        seg = ui.SegmentedControl(frame=(pad, y, cw, 32))
-        seg.segments = ["%s%s %s" % ("" if box.unlocked(k) else "🔒 ", PACK_KINDS[k][0],
-                                     big(box.price(k))) for k in range(len(PACK_KINDS))]
-        seg.selected_index = self.kind
-        seg.action = self.set_kind
-        sv.add_subview(seg)
-        y += 42
-        cost = box.price(self.kind)
-        can = box.coins >= cost and box.unlocked(self.kind)
-        families = [f for f, _ in FAMILIES] + [PACK_ALL]
-        cols = 2
-        bw = (cw - 12) / cols
-        bh = 132
-        for i, family in enumerate(families):
-            color = FAMILY_COLORS.get(family, t["accent"])
-            x = pad + (i % cols) * (bw + 12)
-            yy = y + (i // cols) * (bh + 12)
-            pack = ui.View(frame=(x, yy, bw, bh), background_color=color)
-            pack.corner_radius = 16
-            pack.alpha = 1.0 if can else 0.45
-            pack.add_subview(gradient_view((0, 0, bw, bh), "white", 16, 0.35))
-            pack.add_subview(make_label("BOOSTER " + PACK_KINDS[self.kind][0].upper(),
-                                        (0, 14, bw, 16), 10, True, (1, 1, 1, 0.8), "center"))
-            pack.add_subview(make_label(family, (6, 30, bw - 12, 50), 19, True, "white",
-                                        "center", 2))
-            labels = pack_labels(family)
-            got = sum(1 for l in labels for g in GAMES_BY[l] if key_of(l, g) in box.cards)
-            tot = sum(len(GAMES_BY[l]) for l in labels)
-            pack.add_subview(make_label("%d / %d cartes" % (got, tot), (0, 82, bw, 16), 12,
-                                        False, (1, 1, 1, 0.9), "center"))
-            price, _ = make_pill(("🪙 %s" % big(cost)) if box.unlocked(self.kind) else
-                                 "🔒 à débloquer", (bw / 2 - 56, 102, 112, 22), 12,
-                                 (0, 0, 0, 0.35))
-            pack.add_subview(price)
-            b = ui.Button(frame=(0, 0, bw, bh))
-            b.action = lambda s, f=family: self.open_pack(f)
-            pack.add_subview(b)
-            sv.add_subview(pack)
-        rows = (len(families) + cols - 1) // cols
-        y += rows * (bh + 12) + 10
-        o = PACK_KINDS[self.kind][2]
+        shown = [k for k in range(len(PACK_KINDS)) if box.unlocked(k)]
+        if box.lv and len(shown) < len(PACK_KINDS):
+            shown.append(len(shown))
+        for kind in shown:
+            name, _, cards, odds, _, hp, color = PACK_KINDS[kind]
+            cost = box.price(kind)
+            ok = box.unlocked(kind)
+            can = ok and box.coins >= cost
+            row = ui.View(frame=(pad, y, cw, 96), background_color=color)
+            row.corner_radius = 16
+            row.alpha = 1.0 if can else 0.45
+            row.add_subview(gradient_view((0, 0, cw, 96), "white", 16, 0.35))
+            row.add_subview(make_label(("" if ok else "🔒 ") + name, (16, 10, cw - 140, 26), 20,
+                                       True, "white"))
+            row.add_subview(make_label("%s  •  résistance %d" % (
+                plural(box.pack_size(kind), "carte"), hp), (16, 38, cw - 140, 16), 12, False,
+                (1, 1, 1, 0.9)))
+            row.add_subview(make_label("  ".join("%s %s %%" % ("★" * (i + 1), (
+                "%g" % odds[i]).replace(".", ",")) for i in range(5) if odds[i]),
+                (16, 60, cw - 32, 28), 10, False, (1, 1, 1, 0.85), "left", 2))
+            pill, _ = make_pill(("GRATUIT" if not cost else "🪙 %s" % big(cost)) if ok else
+                                "Boutique +1", (cw - 122, 14, 108, 30), 14, (0, 0, 0, 0.4))
+            row.add_subview(pill)
+            b = ui.Button(frame=(0, 0, cw, 96))
+            b.action = lambda s, k=kind: self.open_pack(k)
+            row.add_subview(b)
+            sv.add_subview(row)
+            y += 96 + 10
         sv.add_subview(make_label(
-            "Chances du booster %s : %s. La dernière carte est toujours meilleure. Les pièces "
-            "se gagnent en tapant et en vendant tes doublons : si ton stock est plein, les "
-            "doublons en trop sont perdus. Une carte Brillante, Holo ou Or vend ses doublons "
-            "×2, ×5 ou ×20. Le prix des boosters monte un peu à chaque ouverture. Jamais d'argent "
-            "réel." % (PACK_KINDS[self.kind][0], "  •  ".join(
-                "%s %d %%" % (RARITY[i][1], o[i]) for i in range(5) if o[i])),
-            (pad, y + 4, cw, 106), 11, False, t["sub"], "center", 7))
-        y += 118
+            "Chaque booster peut contenir n'importe quel jeu, toutes consoles confondues. Une "
+            "nouvelle carte rapporte 1 pièce ; les doublons se vendent, mais si ton stock est "
+            "plein ils sont perdus. Jamais d'argent réel.",
+            (pad, y + 4, cw, 62), 11, False, t["sub"], "center", 4))
+        y += 74
         sv.content_size = (w, y)
 
 
@@ -7241,14 +7214,16 @@ class PackScreen(Screen):
     """Ouverture d'un booster : il faut le taper jusqu'à ce qu'il cède, puis les cartes
     sont distribuées et on les retourne une par une."""
 
-    def __init__(self, app, nav, family, pack, status, kind=0, golden=False):
+    def __init__(self, app, nav, pack, status, kind=0, golden=False):
         super().__init__()
-        self.app, self.nav, self.family, self.kind = app, nav, family, kind
+        self.app, self.nav, self.kind = app, nav, kind
+        self.family = PACK_KINDS[kind][0]
+        self.color = "#d4a017" if golden else PACK_KINDS[kind][6]
         self.golden = golden
         self.pack, self.status = pack, status
-        self.screen_title = "Booster " + family
+        self.screen_title = PACK_KINDS[kind][0]
         self.background_color = app.theme["bg"]
-        self.hp_max = PACK_KINDS[kind][4]
+        self.hp_max = PACK_KINDS[kind][5]
         self.hp = self.hp_max
         self.torn = False
         self.busy = False           # animation d'ouverture en cours
@@ -7287,7 +7262,7 @@ class PackScreen(Screen):
         if w < 50:
             return
         t = self.app.theme
-        color = "#d4a017" if self.golden else FAMILY_COLORS.get(self.family, t["accent"])
+        color = self.color
         if not self.torn:
             pw, ph = min(220, w - 120), min(320, h - 240)
             pack = ui.View(frame=((w - pw) / 2, (h - ph) / 2 - 50, pw, ph),
@@ -7295,7 +7270,7 @@ class PackScreen(Screen):
             pack.corner_radius = 18
             pack.add_subview(gradient_view((0, 0, pw, ph), "white", 18, 0.4))
             pack.add_subview(make_label("★ BOOSTER DORÉ ★" if self.golden else
-                                        "BOOSTER " + PACK_KINDS[self.kind][0].upper(),
+                                        "TOUTES CONSOLES",
                                         (0, ph * 0.3, pw, 20), 14, True, (1, 1, 1, 0.9),
                                         "center"))
             pack.add_subview(make_label(self.family, (8, ph * 0.3 + 26, pw - 16, 70), 26, True,
@@ -7419,9 +7394,7 @@ class PackScreen(Screen):
             if self.status[i] == "perdu":
                 card.alpha = 0.55
         else:
-            t = self.app.theme
-            card = ui.View(frame=frame, background_color=FAMILY_COLORS.get(self.family,
-                                                                             t["accent"]))
+            card = ui.View(frame=frame, background_color=self.color)
             card.corner_radius = 10
             card.add_subview(gradient_view((0, 0, frame[2], frame[3]), "white", 10, 0.3))
             card.add_subview(make_label("?", (0, 0, frame[2], frame[3]), 44, True,
