@@ -91,7 +91,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.80 (17/11/2026)"
+APP_VERSION = "3.81 (17/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -3787,14 +3787,82 @@ def animate(fn, duration=0.2, completion=None):
             completion()
 
 
-def haptic(style=1):
-    """Petite vibration (comme les apps iOS) quand on coche un jeu."""
+HAPTIC_METHODS = ["Impact (iPhone récents)", "Notification", "Sélection", "Moteur Taptic",
+                  "Vibration classique"]
+_HAP = {"gens": {}, "err": set(), "method": None}
+
+
+def haptic_method():
+    if _HAP["method"] is None:
+        d = read_json(CARDS_ACTIVE)
+        m = d.get("hap") if isinstance(d, dict) else None
+        _HAP["method"] = m if isinstance(m, int) and -1 <= m < len(HAPTIC_METHODS) else 0
+    return _HAP["method"]
+
+
+def set_haptic_method(m):
+    _HAP["method"] = m
+    d = read_json(CARDS_ACTIVE)
+    d = d if isinstance(d, dict) else {}
+    d["hap"] = m
     try:
-        from objc_util import ObjCClass
-        gen = ObjCClass("UIImpactFeedbackGenerator").alloc().initWithStyle_(style)
-        gen.impactOccurred()
-    except Exception:
+        write_json(CARDS_ACTIVE, d)
+    except OSError:
         pass
+
+
+def _gen(name, init=None):
+    """Générateur iOS créé une fois et GARDÉ en mémoire (sinon iOS l'oublie avant de
+    jouer la vibration), préparé avant chaque usage."""
+    from objc_util import ObjCClass
+    key = (name, init)
+    g = _HAP["gens"].get(key)
+    if g is None:
+        cls = ObjCClass(name)
+        g = cls.alloc().initWithStyle_(init) if init is not None else cls.new()
+        _HAP["gens"][key] = g
+    return g
+
+
+def haptic_fire(method, style=1):
+    """Joue une vibration avec la méthode donnée ; renvoie None si OK, sinon l'erreur."""
+    try:
+        if method == 0:                           # UIImpactFeedbackGenerator (0 léger, 1 moyen, 2 fort)
+            g = _gen("UIImpactFeedbackGenerator", style)
+            g.prepare()
+            g.impactOccurred()
+        elif method == 1:                         # UINotificationFeedbackGenerator
+            g = _gen("UINotificationFeedbackGenerator")
+            g.prepare()
+            g.notificationOccurred_(0 if style < 2 else 1)
+        elif method == 2:                         # UISelectionFeedbackGenerator
+            g = _gen("UISelectionFeedbackGenerator")
+            g.prepare()
+            g.selectionChanged()
+        elif method == 3:                         # moteur Taptic (méthode non documentée)
+            from objc_util import ObjCClass
+            eng = ObjCClass("UIDevice").currentDevice()._tapticEngine()
+            eng.actuateFeedback_(1 + min(style, 2))
+        elif method == 4:                         # vibration classique du système
+            import ctypes
+            lib = ctypes.cdll.LoadLibrary(
+                "/System/Library/Frameworks/AudioToolbox.framework/AudioToolbox")
+            lib.AudioServicesPlaySystemSound(4095)
+        return None
+    except Exception as ex:
+        return "%s: %s" % (type(ex).__name__, ex)
+
+
+def haptic(style=1):
+    """Vibration (0 légère, 1 moyenne, 2 forte). La méthode se choisit dans le menu du jeu
+    (Vibration) ; une erreur est notée une fois dans le journal."""
+    m = haptic_method()
+    if m < 0:
+        return
+    err = haptic_fire(m, style)
+    if err and m not in _HAP["err"]:
+        _HAP["err"].add(m)
+        log("Vibration (méthode %d, %s) : %s" % (m + 1, HAPTIC_METHODS[m], err), "AVERT")
 
 
 def pop_effect(view):
@@ -6554,6 +6622,40 @@ class CardBox:
     def stock_value(self, app):
         return sum((c - 1) * self.card_value(app, k) for k, c in self.cards.items() if c > 1)
 
+    def sell_key(self, app, key):
+        """Vend jusqu'à « demande » doublons de cette carte. Renvoie (nombre, pièces)."""
+        extra = self.cards.get(key, 0) - 1
+        if extra <= 0:
+            return 0, 0.0
+        n = min(extra, self.demand())
+        total = n * self.card_value(app, key)
+        self.cards[key] -= n
+        self.gain(total)
+        self.sold += n
+        return n, total
+
+    def best_value(self, app, k=None):
+        """Pièces d'une vente réelle : les « demande » copies de doublon les plus chères."""
+        units = []
+        for key, c in self.cards.items():
+            if c > 1:
+                units += [self.card_value(app, key)] * (c - 1)
+        units.sort(reverse=True)
+        return sum(units[:self.demand() if k is None else k])
+
+    def bag(self, app):
+        """Mon sac à dos : [(doublons, rareté, console, jeu, variante, valeur d'une vente)],
+        les plus chers d'abord."""
+        out = []
+        for key, c in self.cards.items():
+            if c > 1:
+                label, _, g = key.partition("|")
+                n = min(c - 1, self.demand())
+                out.append((c - 1, card_tier(app, label, g), label, g, self.var.get(key, 0),
+                            n * self.card_value(app, key)))
+        out.sort(key=lambda x: (-x[5], x[3]))
+        return out
+
     def sell(self, app):
         """Vend « demande » doublons, les plus chers d'abord. Renvoie (nombre, pièces)."""
         stock = sorted(((self.card_value(app, k), k) for k, c in self.cards.items() if c > 1),
@@ -6696,22 +6798,29 @@ def pulse(view, scale=1.12, duration=0.18):
         pass
 
 
-def float_text(parent, text, x, y, color, size=18):
-    """Texte qui monte et s'efface (« +5 »)."""
-    lbl = make_label(text, (x - 60, y, 120, 24), size, True, color, "center")
-    lbl.touch_enabled = False
-    parent.add_subview(lbl)
+def float_text(parent, text, x, y, color, size=18, rise=70):
+    """Texte qui monte et s'efface (« +5 », « -3 »), avec une ombre pour rester lisible.
+    L'animation démarre une fraction de seconde plus tard : le texte est d'abord dessiné,
+    puis il s'envole (sinon iOS peut sauter directement à l'état final : texte invisible)."""
+    h = size + 12
+    shadow = make_label(text, (x - 79, y + 2, 160, h), size, True, (0, 0, 0, 0.7), "center")
+    lbl = make_label(text, (x - 80, y, 160, h), size, True, color, "center")
+    for v in (shadow, lbl):
+        v.touch_enabled = False
+        parent.add_subview(v)
 
     def move():
-        lbl.frame = (x - 60, y - 70, 120, 24)
-        lbl.alpha = 0.0
+        shadow.frame = (x - 79, y - rise + 2, 160, h)
+        lbl.frame = (x - 80, y - rise, 160, h)
+        shadow.alpha = lbl.alpha = 0.0
 
     def done():
-        try:
-            parent.remove_subview(lbl)
-        except Exception:
-            pass
-    animate(move, 0.7, done)
+        for v in (shadow, lbl):
+            try:
+                parent.remove_subview(v)
+            except Exception:
+                pass
+    animate_after(move, 0.8, 0.05, done)
 
 
 def flash(parent, color, strength=0.45):
@@ -6726,7 +6835,7 @@ def flash(parent, color, strength=0.45):
             parent.remove_subview(veil)
         except Exception:
             pass
-    animate(lambda: setattr(veil, "alpha", 0.0), 0.6, done)
+    animate_after(lambda: setattr(veil, "alpha", 0.0), 0.6, 0.05, done)
 
 
 def shake(view, done, turns=5):
@@ -6789,6 +6898,48 @@ def sfx(name, volume=0.6):
 
 
 _ART_CACHE = {}
+
+
+def pack_color_at(color, w, h, x, y, golden=False):
+    """Couleur du sachet là où le doigt touche (volume, reflet, emblème), en (r, v, b)."""
+    c = rgba(color)
+    fx, fy = max(0.0, min(1.0, x / float(w))), max(0.0, min(1.0, y / float(h)))
+    r, g, b = c[0], c[1], c[2]
+    dark = (0.22, 0.10, 0.0, 0.10, 0.22)[min(4, int(fx * 5))]
+    r, g, b = r * (1 - dark), g * (1 - dark), b * (1 - dark)
+    if 0.10 - 0.30 * fy <= fx <= 0.42 - 0.30 * fy:       # bande de reflet
+        r, g, b = r + (1 - r) * 0.2, g + (1 - g) * 0.2, b + (1 - b) * 0.2
+    rad = min(w, h) * 0.26
+    if (x - w / 2.0) ** 2 + (y - h * 0.62) ** 2 <= rad * rad:   # emblème blanc
+        r, g, b = 0.95, 0.95, 0.95
+    return (r, g, b)
+
+
+class TapView(ui.View):
+    """Zone tactile qui donne l'endroit exact du doigt (un ui.Button ne le donne pas)."""
+
+    def __init__(self, frame, on_touch):
+        super().__init__(frame=frame)
+        self.on_touch = on_touch
+        self.last = 0.0
+
+    def touch_began(self, touch):
+        try:
+            x, y = touch.location
+        except Exception:
+            x, y = self.width / 2.0, self.height / 2.0
+        self.on_touch(x, y, True)
+
+    def touch_moved(self, touch):
+        now = time.time()
+        if now - self.last < 0.05:                # traînée d'étincelles sous le doigt
+            return
+        self.last = now
+        try:
+            x, y = touch.location
+        except Exception:
+            return
+        self.on_touch(x, y, False)
 
 
 def pack_image(color, w, h, golden=False):
@@ -6913,9 +7064,16 @@ def clip(view):
         return False
 
 
+_PART = {"n": 0}
+
+
 def particles(parent, x, y, colors, n=10, spread=90, size=7, duration=0.6):
     """Éclats qui partent d'un point et s'effacent."""
+    live = _PART["n"]
+    if live > 120:                                # pas de tempête qui ralentirait l'iPhone
+        n = max(0, n // 4)
     for i in range(n):
+        _PART["n"] += 1
         p = ui.View(frame=(x - size / 2.0, y - size / 2.0, size, size),
                     background_color=random.choice(colors))
         p.corner_radius = size / 2.0 if i % 2 else 1
@@ -6930,11 +7088,12 @@ def particles(parent, x, y, colors, n=10, spread=90, size=7, duration=0.6):
             p.alpha = 0.0
 
         def gone(p=p):
+            _PART["n"] = max(0, _PART["n"] - 1)
             try:
                 parent.remove_subview(p)
             except Exception:
                 pass
-        animate(fly, duration * (0.7 + random.random() * 0.5), gone)
+        animate_after(fly, duration * (0.7 + random.random() * 0.5), 0.05, gone)
 
 
 def shockwave(parent, x, y, color, size=60):
@@ -6958,7 +7117,7 @@ def shockwave(parent, x, y, color, size=60):
             parent.remove_subview(ring)
         except Exception:
             pass
-    animate(grow, 0.55, gone)
+    animate_after(grow, 0.55, 0.05, gone)
 
 
 def screen_shake(view, strength=8, turns=6):
@@ -7121,6 +7280,17 @@ class GameMenuScreen(Screen):
     def play(self):
         self.nav.push(CardsScreen(self.app, self.nav))
 
+    def next_haptic(self):
+        m = haptic_method() + 1
+        m = -1 if m >= len(HAPTIC_METHODS) else m
+        set_haptic_method(m)
+        if m >= 0:
+            err = haptic_fire(m, 2)
+            if err:
+                hud("Méthode %d indisponible : %s" % (m + 1, err[:40]), "error", 1.5)
+                log("Vibration (essai, méthode %d) : %s" % (m + 1, err), "AVERT")
+        self.build()
+
     def toggle_sound(self):
         set_sound(not sound_on())
         sfx("buy")
@@ -7196,6 +7366,15 @@ class GameMenuScreen(Screen):
             self.add_subview(make_button("🔊  Son : oui" if sound_on() else "🔇  Son : non",
                                          (x, y, bw, 40), lambda s: self.toggle_sound(),
                                          t["bg"], t["sub"], 14))
+            y += 44
+            m = haptic_method()
+            self.add_subview(make_button(
+                "📳  Vibration : non" if m < 0 else "📳  Vibration : %s" % HAPTIC_METHODS[m],
+                (x, y, bw, 40), lambda s: self.next_haptic(), t["bg"], t["sub"], 14))
+            self.add_subview(make_label("Touche pour essayer une autre méthode jusqu'à sentir la "
+                                        "vibration (Réglages iPhone > Sons et vibrations > "
+                                        "Vibrations système doit être activé).",
+                                        (x, y + 42, bw, 44), 10, False, t["sub"], "center", 3))
             pulse(self.logo, 1.25, 0.5)
             return
         self.add_subview(make_label("Nouvelle partie : choisis un emplacement"
@@ -7227,6 +7406,15 @@ class GameMenuScreen(Screen):
                                      lambda s: self.set_mode("menu"), t["bg"], t["sub"], 14))
 
 
+def autosell_tick(screen, ticks):
+    """Le vendeur automatique travaille (écran du jeu ou sac à dos ouvert)."""
+    box = screen.app.cards
+    every = box.autosell_every()
+    if every and ticks % (every * 4) == 0 and box.doubles():
+        return box.sell(screen.app)
+    return None
+
+
 @guard_class
 class CardsScreen(Screen):
     """Le jeu : au début, un seul Free pack à déchirer. Les nouvelles cartes et la vente
@@ -7242,7 +7430,7 @@ class CardsScreen(Screen):
         self.scroll.indicator_style = app.theme["indicator"]
         self.scroll.always_bounce_vertical = True
         self.add_subview(self.scroll)
-        self.coin_lbl = self.tap_btn = self.sell_btn = self.stock_lbl = None
+        self.coin_lbl = self.tap_btn = self.bag_btn = None
         self.floats = []
         self.ticks = 0
         self.afford = None
@@ -7260,13 +7448,11 @@ class CardsScreen(Screen):
 
     def idle(self):
         self.ticks += 1
-        box = self.app.cards
-        every = box.autosell_every()
-        if every and self.ticks % (every * 4) == 0 and box.doubles():
-            n, total = box.sell(self.app)            # le vendeur travaille tout seul
+        done = autosell_tick(self, self.ticks)          # le vendeur travaille tout seul
+        if done and done[0]:
             self.show_coins()
             self.show_stock()
-            self.floating(self.sell_btn, "+%s" % big(total), UP, 16)
+            self.floating(self.bag_btn, "+%s" % big(done[1]), UP, 18)
         if self.ticks % 8 == 0:
             self.app.cards.save_soon()
             if self.afford != self.afford_sig():     # un achat devient possible
@@ -7290,19 +7476,31 @@ class CardsScreen(Screen):
                                                    "  PLEIN" if full else "")
             self.coin_lbl.text_color = DOWN if full else self.app.theme["text"]
 
-    def floating(self, btn, text, color, size=18):
+    def floating(self, btn, text, color, size=18, x=None, y=None):
         now = time.time()                     # quelques textes à la fois, pas des dizaines
-        self.floats = [x for x in self.floats if now - x < 0.7]
-        if btn is not None and len(self.floats) < 6:
+        self.floats = [t0 for t0 in self.floats if now - t0 < 0.8]
+        if btn is not None and len(self.floats) < 8:
             self.floats.append(now)
             f = btn.frame
-            float_text(self.scroll, text, f[0] + f[2] / 2 + random.randint(-50, 50), f[1] + 6,
-                       color, size)
+            if x is None:
+                x, y = f[0] + f[2] / 2 + random.randint(-50, 50), f[1] + 6
+            float_text(self.scroll, text, x, y - 20, color, size)
 
-    def tap(self):
+    def tap(self, x=None, y=None, begin=True):
+        """Tape sur le gros bouton : pièces, et étincelles là où le doigt touche."""
         box = self.app.cards
         power = box.click_power()
-        if not power:
+        if not power or self.tap_btn is None:
+            return
+        f = self.tap_btn.frame
+        x = f[2] / 2 if x is None else x
+        y = f[3] / 2 if y is None else y
+        fy = max(0.0, min(1.0, y / float(f[3])))
+        base = (0.56 - 0.1 * fy, 0.27 + 0.2 * fy, 0.68)            # violet, plus clair en bas
+        light = tuple(min(1.0, v + (1 - v) * 0.5) for v in base)
+        colors = [base, base, light, "#ffd60a", "white"]
+        if not begin:                                   # le doigt glisse : traînée seulement
+            particles(self.scroll, f[0] + x, f[1] + y, colors, 3, 40, 5, 0.4)
             return
         crit = random.random() < box.crit_chance()
         if crit:
@@ -7310,50 +7508,22 @@ class CardsScreen(Screen):
         box.gain(power)
         box.taps += 1
         self.show_coins()
-        if self.tap_btn is not None:
-            pulse(self.tap_btn, 1.08, 0.12)
-            f = self.tap_btn.frame
-            particles(self.scroll, f[0] + f[2] * random.uniform(0.2, 0.8), f[1] + f[3] / 2,
-                      ["#ffd60a", "#ff9f0a", "white"], 14 if crit else 3, 90 if crit else 45,
-                      8 if crit else 5, 0.5)
-            if crit:
-                shockwave(self.scroll, f[0] + f[2] / 2, f[1] + f[3] / 2, "#ff453a", 80)
+        pulse(self.tap_btn, 1.06, 0.1)
+        particles(self.scroll, f[0] + x, f[1] + y, colors, 34 if crit else 18,
+                  120 if crit else 85, 9 if crit else 7, 0.65)
+        if crit:
+            shockwave(self.scroll, f[0] + x, f[1] + y, "#ff453a", 70)
         self.floating(self.tap_btn, ("CRITIQUE +%s" if crit else "+%s") % big(power),
-                      "#ff453a" if crit else "#ffd60a", 22 if crit else 18)
+                      "#ff453a" if crit else "#ffd60a", 30 if crit else 26, f[0] + x, f[1] + y)
         if box.taps % 25 == 0:
             haptic(0)
-
-    def sell(self):
-        box = self.app.cards
-        n, total = box.sell(self.app)
-        if not n:
-            hud("Aucun doublon à vendre : ouvre des boosters", "error", 1.0)
-            return
-        haptic(0)
-        sfx("coin")
-        self.show_coins()
-        self.show_stock()
-        if self.sell_btn is not None:
-            pulse(self.sell_btn, 1.06, 0.12)
-            f = self.sell_btn.frame
-            particles(self.scroll, f[0] + f[2] / 2, f[1] + f[3] / 2, ["#ffd60a", "#ff9f0a"], 8,
-                      70, 8, 0.5)
-        if self.coin_lbl is not None:
-            pulse(self.coin_lbl, 1.12, 0.2)
-        self.floating(self.sell_btn, "+%s" % big(total), UP, 20)
 
     def show_stock(self):
         box = self.app.cards
         d = box.doubles()
-        if self.stock_lbl is not None:
-            self.stock_lbl.text = "🎒 Sac de doublons : %d / %d%s" % (
-                d, box.capacity(), "  (PLEIN)" if d >= box.capacity() else "")
-            self.stock_lbl.text_color = DOWN if d >= box.capacity() else self.app.theme["sub"]
-        if self.sell_btn is not None:
-            k = min(d, box.demand())
-            self.sell_btn.title = "💰  Vendre %d doublon%s  (stock : %s)" % (
-                k, "s" if k > 1 else "", big(box.stock_value(self.app))) if d else \
-                "💰  Aucun doublon à vendre"
+        if self.bag_btn is not None:
+            self.bag_btn.title = "🎒  Sac à dos  (%d / %d)%s" % (
+                d, box.capacity(), "  PLEIN" if d >= box.capacity() else "")
 
     def open_pack(self, kind):
         box = self.app.cards
@@ -7381,7 +7551,7 @@ class CardsScreen(Screen):
         for v in list(sv.subviews):
             sv.remove_subview(v)
         self.floats = []
-        self.tap_btn = self.sell_btn = self.stock_lbl = None
+        self.tap_btn = self.bag_btn = None
         w = self.width
         if w < 50:
             return
@@ -7402,25 +7572,24 @@ class CardsScreen(Screen):
             "s" if box.opened > 1 else ""), (16, 46, cw - 32, 18), 13, False, t["sub"]))
         sv.add_subview(head)
         y += 78 + 12
-        # --- taper (une fois « Doigt musclé » acheté)
+        # --- taper (une fois « Doigt musclé » acheté) : zone qui lit la position du doigt
         if box.click_power():
-            self.tap_btn = make_button("🎮  Tape ici !  +%s" % big(box.click_power()),
-                                       (pad + 20, y, cw - 40, 84), lambda s: self.tap(),
-                                       "#8e44ad", "white", 22)
+            self.tap_btn = ui.View(frame=(pad + 20, y, cw - 40, 84), background_color="#8e44ad")
             self.tap_btn.corner_radius = 26
+            self.tap_btn.add_subview(gradient_view((0, 0, cw - 40, 84), "white", 26, 0.3, 0.0))
+            self.tap_btn.add_subview(make_label("🎮  Tape ici !  +%s" % big(box.click_power()),
+                                                (0, 0, cw - 40, 84), 22, True, "white", "center"))
+            self.tap_btn.add_subview(TapView((0, 0, cw - 40, 84),
+                                             lambda x, y, begin: self.tap(x, y, begin)))
             sv.add_subview(self.tap_btn)
             y += 84 + 12
-        # --- sac de doublons et vente (dès que la Boutique est ouverte)
-        if box.level("s1") or box.doubles() or box.sold:
-            self.sell_btn = make_button("", (pad + 20, y, cw - 40, 56), lambda s: self.sell(),
-                                        "#34c759", "white", 15)
-            self.sell_btn.corner_radius = 18
-            sv.add_subview(self.sell_btn)
-            y += 56 + 6
-            self.stock_lbl = make_label("", (pad, y, cw, 16), 12, True, t["sub"], "center")
-            sv.add_subview(self.stock_lbl)
-            self.show_stock()
-            y += 16 + 14
+        # --- sac à dos : mes doublons, à vendre à l'intérieur
+        self.bag_btn = make_button("", (pad, y, cw, 50), lambda s: self.nav.push(
+            BagScreen(self.app, self.nav)), "#ff9f0a" if box.doubles() else t["card"],
+            "white" if box.doubles() else t["accent"], 15)
+        sv.add_subview(self.bag_btn)
+        self.show_stock()
+        y += 50 + 16
         # --- améliorations (dès la première pièce)
         if box.coins >= 1 or box.lv:
             ready = self.tech_ready()
@@ -7429,12 +7598,10 @@ class CardsScreen(Screen):
                 (pad, y, cw, 46), lambda s: self.nav.push(TechScreen(self.app, self.nav)),
                 "#ff9f0a" if ready else t["card"], "white" if ready else t["accent"], 14))
             y += 46 + 16
-        # --- boutique : les boosters débloqués, puis le prochain (verrouillé)
+        # --- boutique : seulement les boosters débloqués
         sv.add_subview(make_label("BOUTIQUE", (pad + 2, y, cw, 18), 13, True, t["sub"]))
         y += 24
         shown = [k for k in range(len(PACK_KINDS)) if box.unlocked(k)]
-        if box.level("s1") and len(shown) < len(PACK_KINDS):
-            shown.append(len(shown))
         if not shown:
             sv.add_subview(make_label("La boutique est vide. Achète l'amélioration « Boutique » "
                                       "pour avoir le Free pack en permanence.",
@@ -7475,6 +7642,143 @@ class CardsScreen(Screen):
             (pad, y + 4, cw, 62), 11, False, t["sub"], "center", 4))
         y += 74
         sv.content_size = (w, y)
+
+
+@guard_class
+class BagScreen(Screen):
+    """Mon sac à dos : les doublons en stock. On touche une carte pour la vendre."""
+    screen_title = "Sac à dos"
+
+    def __init__(self, app, nav):
+        super().__init__()
+        self.app, self.nav = app, nav
+        t = app.theme
+        self.background_color = t["bg"]
+        self.scroll = ui.ScrollView()
+        self.scroll.indicator_style = t["indicator"]
+        self.scroll.always_bounce_vertical = True
+        self.add_subview(self.scroll)
+        self.waiting = {}
+        self.ticks = 0
+        self.cells = {}
+
+    def on_show(self):
+        self.build()
+
+    def layout(self):
+        self.scroll.frame = (0, 0, self.width, self.height)
+        self.build()
+
+    def on_cover(self, url):
+        iv = self.waiting.pop(url, None)
+        if iv is not None:
+            path = self.app.covers.path(url)
+            iv.image = load_image(path) if CoverStore.has_file(path) else None
+
+    def idle(self):
+        self.ticks += 1
+        done = autosell_tick(self, self.ticks)
+        if done and done[0]:
+            self.rebuild_keep()
+
+    def rebuild_keep(self):
+        offset = self.scroll.content_offset
+        self.build()
+        self.scroll.content_offset = offset
+
+    def sold_fx(self, n, total, x, y):
+        haptic(0)
+        sfx("coin")
+        particles(self.scroll, x, y, ["#ffd60a", "#ff9f0a", "white"], 20, 95, 8, 0.65)
+        float_text(self.scroll, "+%s" % big(total), x, y - 30, UP, 28)
+        lost = self.app.cards.lost
+        if lost and lost != getattr(self, "seen_lost", 0):
+            self.seen_lost = lost
+            hud("Portefeuille plein : des pièces sont perdues !", "error", 1.2)
+
+    def sell_one(self, key, x, y):
+        n, total = self.app.cards.sell_key(self.app, key)
+        if n:
+            self.sold_fx(n, total, x, y)
+            self.rebuild_keep()
+
+    def sell_best(self):
+        n, total = self.app.cards.sell(self.app)
+        if not n:
+            hud("Ton sac est vide", "error", 0.8)
+            return
+        self.sold_fx(n, total, self.width / 2, 120)
+        self.rebuild_keep()
+
+    def build(self):
+        app, t, sv = self.app, self.app.theme, self.scroll
+        for v in list(sv.subviews):
+            sv.remove_subview(v)
+        self.waiting = {}
+        w = self.width
+        if w < 50:
+            return
+        box = app.cards
+        pad, cw = 12, w - 24
+        d, cap = box.doubles(), box.capacity()
+        y = 10
+        head = ui.View(frame=(pad, y, cw, 96), background_color=t["card"])
+        head.corner_radius = 16
+        head.add_subview(gradient_view((0, 0, cw, 96), "#ff9f0a", 16, 0.4))
+        head.add_subview(make_label("🎒 %d / %d doublons" % (d, cap), (16, 8, cw - 32, 30), 22,
+                                    True, DOWN if d >= cap else t["text"]))
+        head.add_subview(make_label("🪙 %s / %s   •   %s doublon%s vendu%s par vente" % (
+            big(box.coins), big(box.cap()), box.demand(), "s" if box.demand() > 1 else "",
+            "s" if box.demand() > 1 else ""), (16, 38, cw - 32, 16), 11, False, t["sub"]))
+        track = ui.View(frame=(16, 62, cw - 32, 8), background_color=t["field"])
+        track.corner_radius = 4
+        fill = ui.View(frame=(0, 0, max(8, (cw - 32) * d / float(cap or 1)), 8),
+                       background_color=DOWN if d >= cap else "#ff9f0a")
+        fill.corner_radius = 4
+        fill.hidden = not d
+        track.add_subview(fill)
+        head.add_subview(track)
+        head.add_subview(make_label("Plein : les doublons en trop sont perdus." if d >= cap
+                                    else "Améliore « Stockage » pour une plus grande place.",
+                                    (16, 74, cw - 32, 16), 10, False, t["sub"]))
+        sv.add_subview(head)
+        y += 96 + 12
+        items = box.bag(app)
+        if not items:
+            sv.add_subview(make_label("Ton sac est vide.\nLes cartes que tu as déjà "
+                                      "arrivent ici en doublon : tu pourras les vendre.",
+                                      (pad, y + 20, cw, 60), 14, False, t["sub"], "center", 3))
+            sv.content_size = (w, y + 100)
+            return
+        k = min(d, box.demand())
+        sv.add_subview(make_button("💰  Vendre les %d plus chers  (+%s)" % (
+            k, big(box.best_value(app))),
+            (pad, y, cw, 46), lambda s: self.sell_best(), "#34c759", "white", 15))
+        y += 46 + 14
+        sv.add_subview(make_label("Touche une carte pour la vendre", (pad, y, cw, 16), 12, False,
+                                  t["sub"], "center"))
+        y += 24
+        cols = 3
+        cardw = (cw - (cols - 1) * 10) / cols
+        cardh = cardw * 1.5
+        for i, (extra, tier, label, g, var, value) in enumerate(items):
+            cx = pad + (i % cols) * (cardw + 10)
+            cy = y + (i // cols) * (cardh + 40)
+            card, iv, url = make_card(app, label, g, cardw, cardh, extra + 1, var=var)
+            card.frame = (cx, cy, cardw, cardh)
+            if url:
+                self.waiting[url] = iv
+            sv.add_subview(card)
+            pill, _ = make_pill("💰 +%s" % big(value), (cx + 4, cy + cardh + 6, cardw - 8, 24), 12,
+                                "#34c759")
+            sv.add_subview(pill)
+            key = key_of(label, g)
+            tap = TapView((cx, cy, cardw, cardh + 30),
+                          lambda x, yy, begin, key=key, cx=cx, cy=cy:
+                          begin and self.sell_one(key, cx + x, cy + yy))
+            sv.add_subview(tap)
+        rows = (len(items) + cols - 1) // cols
+        sv.content_size = (w, y + rows * (cardh + 40) + 20)
 
 
 @guard_class
@@ -7699,9 +8003,8 @@ class PackScreen(Screen):
             self.rip = ui.View(frame=(0, ph * 0.075, 0, 3), background_color="white")
             self.rip.touch_enabled = False
             pack.add_subview(self.rip)
-            b = ui.Button(frame=(0, 0, pw, ph))
-            b.action = lambda s: self.hit()
-            pack.add_subview(b)
+            self.pack_color = (self.color, pw, ph)
+            pack.add_subview(TapView((0, 0, pw, ph), lambda x, y, begin: self.touch(x, y, begin)))
             self.add_subview(pack)
             self.pack_view = pack
             y = py + ph + 16
@@ -7735,6 +8038,13 @@ class PackScreen(Screen):
             sfx("deal")
         self.refresh_bottom()
 
+    def hit_lbl_update(self, dmg, smash):
+        """Dégâts de la dernière tape, affichés à côté de la barre de résistance."""
+        if self.hp_lbl is not None:
+            self.hp_lbl.text = "Résistance : %d / %d   (%s-%d)" % (
+                max(0, self.hp), self.hp_max, "💥 " if smash else "", dmg)
+            pulse(self.hp_lbl, 1.12, 0.15)
+
     def show_hp(self):
         if self.rip is not None and self.pack_view is not None:
             done = 1.0 - max(0, self.hp) / float(self.hp_max)
@@ -7742,7 +8052,22 @@ class PackScreen(Screen):
         if self.hp_lbl is not None:
             self.hp_lbl.text = "Résistance : %d / %d" % (max(0, self.hp), self.hp_max)
 
-    def hit(self):
+    def touch(self, x, y, begin):
+        """Le doigt touche le sachet en (x, y) : étincelles de la couleur du sachet à cet
+        endroit ; un vrai début de toucher compte comme une tape."""
+        if self.torn or self.busy or self.pack_view is None:
+            return
+        base, pw, ph = self.pack_color
+        shade = pack_color_at(base, pw, ph, x, y, self.golden)
+        light = tuple(min(1.0, v + (1 - v) * 0.45) for v in shade)
+        colors = [shade, shade, shade, light, "white"]
+        f = self.pack_view.frame
+        if begin:
+            self.hit(f[0] + x, f[1] + y, colors)
+        else:
+            particles(self, f[0] + x, f[1] + y, colors, 3, 40, 5, 0.4)
+
+    def hit(self, hx=None, hy=None, colors=None):
         """Une tape sur le booster : il perd des points, tremble, se déchire, puis cède."""
         if self.torn or self.busy:
             return
@@ -7755,11 +8080,16 @@ class PackScreen(Screen):
         pack = self.pack_view
         if pack is not None:
             f = pack.frame
-            hx, hy = f[0] + f[2] * random.uniform(0.2, 0.8), f[1] + f[3] * random.uniform(0.2, 0.7)
-            float_text(self, ("💥 -%d" if smash else "-%d") % dmg, hx, hy - 20,
-                       "#ffd60a" if smash else "white", 26 if smash else 20)
-            particles(self, hx, hy, ["white", self.color, "#ffd60a"], 10 if smash else 5,
-                      70 if smash else 45, 6, 0.45)
+            if hx is None:
+                hx, hy = f[0] + f[2] * random.uniform(0.2, 0.8), f[1] + f[3] * random.uniform(
+                    0.2, 0.7)
+            colors = colors or [self.color, "white"]
+            self.hit_lbl_update(dmg, smash)
+            float_text(self, ("💥 -%d" if smash else "-%d") % dmg, hx, hy - 30,
+                       "#ffd60a" if smash else "#ff453a", 36 if smash else 30, 90)
+            particles(self, hx, hy, colors, 40 if smash else 22, 130 if smash else 95,
+                      9 if smash else 7, 0.7)
+            shockwave(self, hx, hy, colors[0], 34)
         if self.hp > 0:
             haptic(1 if smash else 0)
             sfx("hit")
@@ -8011,13 +8341,6 @@ class AlbumScreen(Screen):
             path = self.app.covers.path(url)
             iv.image = load_image(path) if CoverStore.has_file(path) else None
 
-    def sell(self):
-        n, total = self.app.cards.sell(self.app)
-        if n:
-            haptic(0)
-            hud("+%s pièces (%s)" % (big(total), plural(n, "doublon")), "success", 0.6)
-        self.build()
-
     def owned(self):
         """Mes cartes, les plus rares d'abord : [(rareté, console, jeu, nombre, variante)]."""
         out = []
@@ -8040,13 +8363,6 @@ class AlbumScreen(Screen):
         box = app.cards
         pad, cw = 12, w - 24
         y = 6
-        n = box.doubles()
-        if n:
-            k = min(n, box.demand())
-            sv.add_subview(make_button("💰 Vendre %s  (stock %d / %d : %s pièces)" % (
-                plural(k, "doublon"), n, box.capacity(), big(box.stock_value(app))),
-                (pad, y, cw, 40), lambda s: self.sell(), "#34c759", "white", 13))
-            y += 40 + 10
         cards = self.owned()
         if not cards:
             sv.add_subview(make_label("Pas encore de carte : ouvre ton premier booster !",
