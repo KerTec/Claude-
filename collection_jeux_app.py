@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.76 (17/11/2026)"
+APP_VERSION = "3.77 (17/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -6253,7 +6253,7 @@ PACK_KINDS = [
     ("Booster Platine", 25000, 4, [0, 30, 45, 18, 7], [0, 0, 40, 45, 15], 500, "#0a84ff"),
     ("Booster Diamant", 300000, 5, [0, 0, 50, 35, 15], [0, 0, 0, 65, 35], 1500, "#af52de"),
 ]
-SHOP_COSTS = [2, 60, 1500, 30000, 500000]     # prix des niveaux de « Boutique »
+SHOP_COSTS = [2, 8, 60, 1500, 30000, 500000]  # prix des niveaux de « Boutique »
 # variante d'une carte : (nom, signe, chance en %, multiplicateur de vente, couleur)
 VARIANTS = [
     ("Normale", "", 88, 1, None),
@@ -6267,7 +6267,7 @@ TECH_GROWTH = 1.0    # prix de départ, et vitesse à laquelle les niveaux rench
 # arbre d'améliorations :
 # (clé, branche, rang, nom, effet par niveau, prix de départ, hausse, niveau max, prérequis)
 TECH = [
-    ("s1", 1, 0, "Boutique", "+1 type de booster en vente", 2, 1.0, 5, []),
+    ("s1", 1, 0, "Boutique", "+1 type de booster en vente", 2, 1.0, 6, []),
     # --- vente
     ("w1", 0, 1, "Portefeuille", "pièces maximum ×10 (le surplus est perdu)", 80, 1.0, 5,
      ["s1"]),
@@ -6354,6 +6354,9 @@ class CardBox:
         before = levels("lv")
         if self.lv and not self.lv.get("s1"):     # partie d'avant la « Boutique »
             self.lv["s1"] = 3 if before.get("b6") else (2 if before.get("b3") else 1)
+        if self.lv.get("s1") and raw.get("sv") != 2:
+            # avant, le Free pack était permanent sans rien acheter : un niveau de plus
+            self.lv["s1"] = min(TECH_BY["s1"][7], self.lv["s1"] + 1)
         if before.get("v4") and not any(self.lv.get("r%d" % i) for i in range(1, 6)):
             for i in range(1, 6):                 # ancienne « Valeur » : une cote par rareté
                 self.lv["r%d" % i] = min(20, before["v4"] + (before.get("v7", 0)
@@ -6373,6 +6376,7 @@ class CardBox:
         try:
             write_json(self.path, {"coins": round(self.coins, 2), "cards": self.cards,
                                    "var": self.var, "lv": self.lv, "daily": self.daily,
+                                   "sv": 2,
                                    "free": self.free, "opened": self.opened,
                                    "taps": self.taps, "sold": self.sold})
         except OSError as e:
@@ -6402,7 +6406,9 @@ class CardBox:
         t = TECH_BY[key]
         if self.level(key) >= t[7]:
             return "max"
-        return "possible" if all(self.level(n) > 0 for n in t[8]) else "bloqué"
+        # le reste de l'arbre s'ouvre au 2e niveau de « Boutique »
+        ok = all(self.level(n) >= (2 if n == "s1" else 1) for n in t[8])
+        return "possible" if ok else "bloqué"
 
     def buy(self, key):
         cost = self.cost(key)
@@ -6479,8 +6485,13 @@ class CardBox:
     def pack_size(self, kind=0):
         return PACK_KINDS[kind][2] + self.level("b2")
 
+    def gift(self):
+        """Au tout début : un seul Free pack offert (tant qu'on ne peut pas acheter la
+        Boutique, pour ne jamais rester bloqué sans pièces)."""
+        return not self.level("s1") and self.coins < SHOP_COSTS[0]
+
     def unlocked(self, kind):
-        return kind <= self.level("s1")
+        return kind < self.level("s1") or (kind == 0 and self.gift())
 
     def price(self, kind):
         # les boosters renchérissent un peu à chaque ouverture (+1 % tous les INFLATION)
@@ -6962,6 +6973,7 @@ class CardsScreen(Screen):
             (self.tech_ready(),)
 
     def show_coins(self):
+        box = self.app.cards
         if self.coin_lbl is not None:
             full = box.coins >= box.cap()
             self.coin_lbl.text = "🪙 %s / %s%s" % (big(box.coins), big(box.cap()),
@@ -7099,8 +7111,13 @@ class CardsScreen(Screen):
         sv.add_subview(make_label("BOUTIQUE", (pad + 2, y, cw, 18), 13, True, t["sub"]))
         y += 24
         shown = [k for k in range(len(PACK_KINDS)) if box.unlocked(k)]
-        if box.lv and len(shown) < len(PACK_KINDS):
+        if box.level("s1") and len(shown) < len(PACK_KINDS):
             shown.append(len(shown))
+        if not shown:
+            sv.add_subview(make_label("La boutique est vide. Achète l'amélioration « Boutique » "
+                                      "pour avoir le Free pack en permanence.",
+                                      (pad, y, cw, 40), 13, True, UP, "center", 2))
+            y += 50
         for kind in shown:
             name, _, cards, odds, _, hp, color = PACK_KINDS[kind]
             cost = box.price(kind)
@@ -7118,7 +7135,8 @@ class CardsScreen(Screen):
             row.add_subview(make_label("  ".join("%s %s %%" % ("★" * (i + 1), (
                 "%g" % odds[i]).replace(".", ",")) for i in range(5) if odds[i]),
                 (16, 60, cw - 32, 28), 10, False, (1, 1, 1, 0.85), "left", 2))
-            pill, _ = make_pill(("GRATUIT" if not cost else "🪙 %s" % big(cost)) if ok else
+            pill, _ = make_pill((("OFFERT" if box.gift() else "GRATUIT") if not cost
+                                 else "🪙 %s" % big(cost)) if ok else
                                 "Boutique +1", (cw - 122, 14, 108, 30), 14, (0, 0, 0, 0.4))
             row.add_subview(pill)
             b = ui.Button(frame=(0, 0, cw, 96))
@@ -7127,7 +7145,8 @@ class CardsScreen(Screen):
             sv.add_subview(row)
             y += 96 + 10
         sv.add_subview(make_label(
-            "Chaque booster peut contenir n'importe quel jeu, toutes consoles confondues. Une "
+            "Chaque booster peut contenir n'importe quel jeu, toutes consoles confondues. "
+            "Chaque niveau de « Boutique » ajoute un booster en vente. Une "
             "nouvelle carte rapporte 1 pièce ; les doublons se vendent, mais si ton stock est "
             "plein ils sont perdus. Jamais d'argent réel.",
             (pad, y + 4, cw, 62), 11, False, t["sub"], "center", 4))
