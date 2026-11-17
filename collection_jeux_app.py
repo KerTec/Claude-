@@ -91,7 +91,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.83 (17/11/2026)"
+APP_VERSION = "3.84 (17/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -7190,7 +7190,7 @@ def confetti(parent, colors, n=36):
             pass
 
         def fall(p=p, x=x):
-            p.frame = (x + random.randint(-50, 50), h + 20, p.width, p.height)
+            p.center = (x + random.randint(-50, 50), h + 20)       # pas de cadre sur une vue tournée
             p.alpha = 0.3
 
         def gone(p=p):
@@ -7215,7 +7215,7 @@ def shine(card, w, h):
     card.add_subview(band)
 
     def sweep():
-        band.frame = (w * 1.3, -h * 0.2, w * 0.35, h * 1.4)
+        band.center = (w * 1.3 + w * 0.175, h * 0.5)         # pas de cadre sur une vue tournée
 
     def gone():
         try:
@@ -8136,9 +8136,11 @@ class PackScreen(Screen):
                     pass
 
                 def place(card=card, target=target):
+                    # D'ABORD redresser la carte : fixer le cadre d'une vue encore tournée
+                    # la déforme (cartes écrasées et coupées).
+                    set_transform(card, ui.Transform())
                     card.frame = target
                     card.alpha = 1.0
-                    set_transform(card, ui.Transform())
                 animate_after(place, 0.3, 0.09 * i)
         if deal:
             sfx("deal")
