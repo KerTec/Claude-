@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.73 (16/11/2026)"
+APP_VERSION = "3.74 (17/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -6243,11 +6243,11 @@ class WishScreen(Screen):
 START_COINS = 0
 SELL_VALUE = [3, 8, 25, 80, 300]          # revente d'un doublon, par rareté
 PACK_ALL = "Toutes consoles"
-# sorte de booster : (nom, prix, chances des cartes, chances de la dernière, points de vie)
+# sorte de booster : (nom, prix, chances des cartes, chances de la dernière, résistance)
 PACK_KINDS = [
-    ("Classique", 30, [60, 27, 9, 3, 1], [0, 60, 28, 9, 3], 8),
-    ("Premium", 600, [20, 45, 25, 8, 2], [0, 0, 70, 22, 8], 30),
-    ("Légende", 8000, [0, 30, 45, 18, 7], [0, 0, 0, 75, 25], 120),
+    ("Classique", 30, [60, 27, 9, 3, 1], [0, 60, 28, 9, 3], 20),
+    ("Premium", 400, [20, 45, 25, 8, 2], [0, 0, 70, 22, 8], 150),
+    ("Légende", 5000, [0, 30, 45, 18, 7], [0, 0, 0, 75, 25], 1000),
 ]
 # variante d'une carte : (nom, signe, chance en %, multiplicateur de vente, couleur)
 VARIANTS = [
@@ -6256,6 +6256,9 @@ VARIANTS = [
     ("Holo", "🌈", 3, 5, "#ff2d55"),
     ("Or", "👑", 1, 20, "#ffd60a"),
 ]
+INFLATION = 5        # nombre de boosters ouverts pour +1 % sur le prix des boosters
+TECH_PRICE = 1.75    # réglages globaux des prix de l'arbre (durée de vie du jeu) :
+TECH_GROWTH = 1.3    # prix de départ, et vitesse à laquelle les niveaux renchérissent
 # arbre d'améliorations :
 # (clé, branche, rang, nom, effet par niveau, prix de départ, hausse, niveau max, prérequis)
 TECH = [
@@ -6263,18 +6266,31 @@ TECH = [
     ("v2", 0, 1, "Stockage", "+1 place de doublon", 40, 1.15, 50, ["v1"]),
     ("v3", 0, 2, "Demande", "+1 doublon vendu par vente", 150, 1.4, 20, ["v2"]),
     ("v4", 0, 3, "Valeur", "+50 % sur la vente des cartes", 300, 1.35, 30, ["v3"]),
-    ("v5", 0, 4, "Coup critique", "+3 % de tapes ×10", 2000, 2.0, 10, ["v4"]),
+    ("v5", 0, 4, "Coup critique", "+3 % de tapes critiques", 2000, 2.0, 10, ["v4"]),
+    ("v6", 0, 5, "Critique puissant", "critique : ×10, puis +5 par niveau", 6000, 1.9, 8,
+     ["v5"]),
+    ("v7", 0, 6, "Prime de rareté", "cartes Rare et plus : vente +100 %", 15000, 1.8, 10,
+     ["v6"]),
+    ("v8", 0, 7, "Recyclage", "doublon perdu : rend 10 % de sa valeur", 40000, 2.2, 5,
+     ["v7"]),
     ("b1", 1, 0, "Dégâts", "+1 dégât par tape sur un booster", 60, 1.25, 30, []),
     ("b2", 1, 1, "Cartes", "+1 carte par booster", 500, 3.0, 6, ["b1"]),
     ("b3", 1, 2, "Booster Premium", "débloque le booster Premium", 5000, 1.0, 1, ["b2"]),
     ("b4", 1, 3, "Remise", "boosters −4 %", 1500, 1.8, 10, ["b3"]),
-    ("b5", 1, 4, "Booster Légende", "débloque le booster Légende", 80000, 1.0, 1, ["b4"]),
+    ("b5", 1, 4, "Coup de masse", "+4 % de tapes ×5 sur un booster", 8000, 1.7, 10, ["b4"]),
+    ("b6", 1, 5, "Booster Légende", "débloque le booster Légende", 80000, 1.0, 1, ["b5"]),
+    ("b7", 1, 6, "Carte bonus", "+5 % de chance d'une carte en plus", 30000, 1.8, 10,
+     ["b6"]),
     ("c1", 2, 0, "Trèfle", "plus de cartes rares", 400, 2.0, 10, []),
     ("c2", 2, 1, "Chasseur", "+20 % de variantes rares", 1200, 2.0, 10, ["c1"]),
     ("c3", 2, 2, "Livraison", "booster gratuit 20 min plus tôt", 2500, 2.0, 6, ["c2"]),
     ("c4", 2, 3, "Bonus du jour", "+200 pièces de bonus", 800, 1.4, 20, ["c3"]),
-    ("m1", 1, 5, "Maître collectionneur", "tapes et ventes ×2", 500000, 1.0, 1,
-     ["v5", "b5", "c4"]),
+    ("c5", 2, 4, "Booster doré", "booster doré plus souvent (tous les 15, −1)", 10000, 1.9,
+     8, ["c4"]),
+    ("c6", 2, 5, "Prime de nouveauté", "des pièces pour chaque nouvelle carte", 20000, 1.8,
+     10, ["c5"]),
+    ("m1", 1, 8, "Maître collectionneur", "tapes et ventes ×2", 500000, 1.0, 1,
+     ["v8", "b7", "c6"]),
 ]
 TECH_BY = {t[0]: t for t in TECH}
 TECH_BRANCHES = [("Vente", "#34c759"), ("Boosters", "#ff9f0a"), ("Chance", "#8e44ad")]
@@ -6347,7 +6363,7 @@ class CardBox:
 
     def cost(self, key):
         t = TECH_BY[key]
-        return int(t[5] * t[6] ** self.level(key))
+        return int(t[5] * t[6] ** (self.level(key) * TECH_GROWTH) * TECH_PRICE)
 
     def state(self, key):
         """« max », « possible » (prérequis remplis) ou « bloqué »."""
@@ -6374,6 +6390,23 @@ class CardBox:
     def crit_chance(self):
         return 0.03 * self.level("v5")
 
+    def crit_mult(self):
+        return 10 + 5 * self.level("v6")
+
+    def smash_chance(self):
+        return 0.04 * self.level("b5")
+
+    def bonus_card_chance(self):
+        return 0.05 * self.level("b7")
+
+    def golden_every(self):
+        """Un booster doré tous les N boosters (0 = jamais)."""
+        return 15 - self.level("c5") if self.level("c5") else 0
+
+    def is_golden(self):
+        n = self.golden_every()
+        return bool(n) and (self.opened + 1) % n == 0
+
     def capacity(self):
         return 3 + self.level("v2")
 
@@ -6390,10 +6423,12 @@ class CardBox:
         return 3 + self.level("b2")
 
     def unlocked(self, kind):
-        return kind == 0 or bool(self.level("b3" if kind == 1 else "b5"))
+        return kind == 0 or bool(self.level("b3" if kind == 1 else "b6"))
 
     def price(self, kind):
-        return max(1, int(PACK_KINDS[kind][1] * (1 - 0.04 * self.level("b4"))))
+        # les boosters renchérissent un peu à chaque ouverture (+1 % tous les INFLATION)
+        return max(1, int(PACK_KINDS[kind][1] * (1 - 0.04 * self.level("b4"))
+                          * (1 + self.opened / float(INFLATION) / 100.0)))
 
     def daily_bonus(self):
         return 300 + 200 * self.level("c4")
@@ -6419,7 +6454,7 @@ class CardBox:
     def doubles(self):
         return sum(c - 1 for c in self.cards.values() if c > 1)
 
-    def add_card(self, label, game, var):
+    def add_card(self, app, label, game, var):
         """Range une carte tirée. Renvoie « nouveau », « mieux » (meilleure variante),
         « doublon » ou « perdu » (stock de doublons plein)."""
         key = key_of(label, game)
@@ -6427,19 +6462,23 @@ class CardBox:
             self.cards[key] = 1
             if var:
                 self.var[key] = var
+            self.coins += SELL_VALUE[card_tier(app, label, game)] * 2 * self.level("c6") * \
+                self.master()                                   # prime de nouveauté
             return "nouveau"
         if var > self.var.get(key, 0):
             self.var[key] = var
             return "mieux"
         if self.doubles() >= self.capacity():
+            self.coins += self.card_value(app, key) * 0.1 * self.level("v8")   # recyclage
             return "perdu"
         self.cards[key] += 1
         return "doublon"
 
     def card_value(self, app, key):
         label, _, g = key.partition("|")
-        return SELL_VALUE[card_tier(app, label, g)] * VARIANTS[self.var.get(key, 0)][3] * \
-            self.value_mult()
+        tier = card_tier(app, label, g)
+        rare = 1 + self.level("v7") if tier >= 2 else 1          # prime de rareté
+        return SELL_VALUE[tier] * VARIANTS[self.var.get(key, 0)][3] * self.value_mult() * rare
 
     def stock_value(self, app):
         return sum((c - 1) * self.card_value(app, k) for k, c in self.cards.items() if c > 1)
@@ -6484,13 +6523,13 @@ def pack_pool(app, family):
     return pool
 
 
-def draw_pack(app, family, kind=0, luck=0, rng=random, size=3, hunter=0):
+def draw_pack(app, family, kind=0, luck=0, rng=random, size=3, hunter=0, golden=False):
     """Les cartes d'un booster : [(console, jeu, rareté, variante)]."""
     pool = pack_pool(app, family)
     odds, odds_last = PACK_KINDS[kind][2], PACK_KINDS[kind][3]
     out = []
     for i in range(size):
-        base = odds_last if i == size - 1 else odds
+        base = odds_last if (golden or i == size - 1) else odds
         weights = [w * (1 + 0.15 * luck * t) for t, w in enumerate(base)]   # trèfle
         tier = rng.choices(range(5), weights=weights)[0]
         while tier > 0 and not pool[tier]:       # pas de carte de cette rareté ici
@@ -6878,7 +6917,7 @@ class CardsScreen(Screen):
         power = box.click_power()
         crit = random.random() < box.crit_chance()
         if crit:
-            power *= 10
+            power *= box.crit_mult()
         box.coins += power
         box.taps += 1
         self.show_coins()
@@ -6942,15 +6981,17 @@ class CardsScreen(Screen):
             return
         else:
             box.coins -= cost
-        pack = draw_pack(self.app, family, kind, box.level("c1"), size=box.pack_size(),
-                         hunter=box.level("c2"))
-        status = [box.add_card(label, g, var) for label, g, _, var in pack]
+        golden = box.is_golden()
+        size = box.pack_size() + (1 if random.random() < box.bonus_card_chance() else 0)
+        pack = draw_pack(self.app, family, kind, box.level("c1"), size=min(9, size),
+                         hunter=box.level("c2"), golden=golden)
+        status = [box.add_card(self.app, label, g, var) for label, g, _, var in pack]
         box.opened += 1
         box.save()                      # enregistré avant l'animation : rien n'est perdu
         log("Cartes : booster %s %s%s -> %s" % (PACK_KINDS[kind][0], family,
                                                " (gratuit)" if free else "",
                                                ", ".join(g for _, g, _, _ in pack)))
-        self.nav.push(PackScreen(self.app, self.nav, family, pack, status, kind))
+        self.nav.push(PackScreen(self.app, self.nav, family, pack, status, kind, golden))
 
     def build(self):
         app, t, sv = self.app, self.app.theme, self.scroll
@@ -7064,10 +7105,11 @@ class CardsScreen(Screen):
             "Chances du booster %s : %s. La dernière carte est toujours meilleure. Les pièces "
             "se gagnent en tapant et en vendant tes doublons : si ton stock est plein, les "
             "doublons en trop sont perdus. Une carte Brillante, Holo ou Or vend ses doublons "
-            "×2, ×5 ou ×20. Jamais d'argent réel." % (PACK_KINDS[self.kind][0], "  •  ".join(
+            "×2, ×5 ou ×20. Le prix des boosters monte un peu à chaque ouverture. Jamais d'argent "
+            "réel." % (PACK_KINDS[self.kind][0], "  •  ".join(
                 "%s %d %%" % (RARITY[i][1], o[i]) for i in range(5) if o[i])),
-            (pad, y + 4, cw, 92), 11, False, t["sub"], "center", 6))
-        y += 104
+            (pad, y + 4, cw, 106), 11, False, t["sub"], "center", 7))
+        y += 118
         sv.content_size = (w, y)
 
 
@@ -7199,9 +7241,10 @@ class PackScreen(Screen):
     """Ouverture d'un booster : il faut le taper jusqu'à ce qu'il cède, puis les cartes
     sont distribuées et on les retourne une par une."""
 
-    def __init__(self, app, nav, family, pack, status, kind=0):
+    def __init__(self, app, nav, family, pack, status, kind=0, golden=False):
         super().__init__()
         self.app, self.nav, self.family, self.kind = app, nav, family, kind
+        self.golden = golden
         self.pack, self.status = pack, status
         self.screen_title = "Booster " + family
         self.background_color = app.theme["bg"]
@@ -7244,15 +7287,16 @@ class PackScreen(Screen):
         if w < 50:
             return
         t = self.app.theme
-        color = FAMILY_COLORS.get(self.family, t["accent"])
+        color = "#d4a017" if self.golden else FAMILY_COLORS.get(self.family, t["accent"])
         if not self.torn:
             pw, ph = min(220, w - 120), min(320, h - 240)
             pack = ui.View(frame=((w - pw) / 2, (h - ph) / 2 - 50, pw, ph),
                            background_color=color)
             pack.corner_radius = 18
             pack.add_subview(gradient_view((0, 0, pw, ph), "white", 18, 0.4))
-            pack.add_subview(make_label("BOOSTER " + PACK_KINDS[self.kind][0].upper(),
-                                        (0, ph * 0.3, pw, 20), 14, True, (1, 1, 1, 0.8),
+            pack.add_subview(make_label("★ BOOSTER DORÉ ★" if self.golden else
+                                        "BOOSTER " + PACK_KINDS[self.kind][0].upper(),
+                                        (0, ph * 0.3, pw, 20), 14, True, (1, 1, 1, 0.9),
                                         "center"))
             pack.add_subview(make_label(self.family, (8, ph * 0.3 + 26, pw - 16, 70), 26, True,
                                         "white", "center", 2))
@@ -7305,13 +7349,17 @@ class PackScreen(Screen):
         if self.torn or self.busy:
             return
         dmg = self.app.cards.damage()
+        smash = random.random() < self.app.cards.smash_chance()
+        if smash:
+            dmg *= 5
         self.hp -= dmg
         self.show_hp()
         pack = self.pack_view
         if pack is not None:
             f = pack.frame
-            float_text(self, "-%d" % dmg, f[0] + f[2] / 2 + random.randint(-60, 60), f[1] + 10,
-                       "#ff453a", 20)
+            float_text(self, ("💥 -%d" if smash else "-%d") % dmg,
+                       f[0] + f[2] / 2 + random.randint(-60, 60), f[1] + 10,
+                       "#ffd60a" if smash else "#ff453a", 26 if smash else 20)
         if self.hp > 0:
             haptic(0)
             if pack is not None:
