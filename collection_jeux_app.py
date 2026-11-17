@@ -91,7 +91,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.81 (17/11/2026)"
+APP_VERSION = "3.82 (17/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -3787,7 +3787,7 @@ def animate(fn, duration=0.2, completion=None):
             completion()
 
 
-HAPTIC_METHODS = ["Impact (iPhone récents)", "Notification", "Sélection", "Moteur Taptic",
+HAPTIC_METHODS = ["Impact (iPhone récents)", "Notification", "Sélection", "Pop système",
                   "Vibration classique"]
 _HAP = {"gens": {}, "err": set(), "method": None}
 
@@ -3824,33 +3824,47 @@ def _gen(name, init=None):
     return g
 
 
+def _haptic_inner(method, style):
+    """Joue la vibration. À appeler SUR LE FIL PRINCIPAL d'iOS (UIKit l'exige)."""
+    if method == 0:                           # UIImpactFeedbackGenerator (0 léger, 1 moyen, 2 fort)
+        g = _gen("UIImpactFeedbackGenerator", style)
+        g.prepare()
+        g.impactOccurred()
+    elif method == 1:                         # UINotificationFeedbackGenerator
+        g = _gen("UINotificationFeedbackGenerator")
+        g.prepare()
+        g.notificationOccurred_(0 if style < 2 else 1)
+    elif method == 2:                         # UISelectionFeedbackGenerator
+        g = _gen("UISelectionFeedbackGenerator")
+        g.prepare()
+        g.selectionChanged()
+    elif method in (3, 4):                    # sons-vibrations du système (AudioToolbox)
+        import ctypes
+        lib = ctypes.cdll.LoadLibrary(
+            "/System/Library/Frameworks/AudioToolbox.framework/AudioToolbox")
+        lib.AudioServicesPlaySystemSound(1520 if method == 3 else 4095)
+
+
 def haptic_fire(method, style=1):
-    """Joue une vibration avec la méthode donnée ; renvoie None si OK, sinon l'erreur."""
+    """Joue une vibration avec la méthode donnée ; renvoie None si OK, sinon l'erreur.
+    Les touchers de l'app arrivent sur un fil secondaire (« Dummy-1 ») : iOS ignore alors
+    les générateurs de vibration sans le moindre message. L'appel est donc envoyé au fil
+    principal (objc_util.on_main_thread)."""
+    out = {}
+
+    def run():
+        try:
+            _haptic_inner(method, style)
+        except Exception as ex:
+            out["err"] = "%s: %s" % (type(ex).__name__, ex)
     try:
-        if method == 0:                           # UIImpactFeedbackGenerator (0 léger, 1 moyen, 2 fort)
-            g = _gen("UIImpactFeedbackGenerator", style)
-            g.prepare()
-            g.impactOccurred()
-        elif method == 1:                         # UINotificationFeedbackGenerator
-            g = _gen("UINotificationFeedbackGenerator")
-            g.prepare()
-            g.notificationOccurred_(0 if style < 2 else 1)
-        elif method == 2:                         # UISelectionFeedbackGenerator
-            g = _gen("UISelectionFeedbackGenerator")
-            g.prepare()
-            g.selectionChanged()
-        elif method == 3:                         # moteur Taptic (méthode non documentée)
-            from objc_util import ObjCClass
-            eng = ObjCClass("UIDevice").currentDevice()._tapticEngine()
-            eng.actuateFeedback_(1 + min(style, 2))
-        elif method == 4:                         # vibration classique du système
-            import ctypes
-            lib = ctypes.cdll.LoadLibrary(
-                "/System/Library/Frameworks/AudioToolbox.framework/AudioToolbox")
-            lib.AudioServicesPlaySystemSound(4095)
-        return None
+        from objc_util import on_main_thread
+        on_main_thread(run)()
+    except ImportError:
+        run()                                 # pas de objc_util (tests sur ordinateur)
     except Exception as ex:
-        return "%s: %s" % (type(ex).__name__, ex)
+        out.setdefault("err", "%s: %s" % (type(ex).__name__, ex))
+    return out.get("err")
 
 
 def haptic(style=1):
@@ -7056,9 +7070,16 @@ def art_view(img, frame, color, radius=10):
 
 
 def clip(view):
-    """Coupe ce qui dépasse de la vue (pour le reflet). Renvoie True si c'est fait."""
-    try:
+    """Coupe ce qui dépasse de la vue (pour le reflet). Renvoie True si c'est fait.
+    (UIKit : à faire sur le fil principal, les touchers arrivent sur un fil secondaire.)"""
+    def go():
         view.objc_instance.setClipsToBounds_(True)
+    try:
+        try:
+            from objc_util import on_main_thread
+            on_main_thread(go)()
+        except ImportError:
+            go()
         return True
     except Exception:
         return False
@@ -7289,6 +7310,9 @@ class GameMenuScreen(Screen):
             if err:
                 hud("Méthode %d indisponible : %s" % (m + 1, err[:40]), "error", 1.5)
                 log("Vibration (essai, méthode %d) : %s" % (m + 1, err), "AVERT")
+            else:
+                log("Vibration (essai, méthode %d, %s) : jouée sans erreur" % (
+                    m + 1, HAPTIC_METHODS[m]))
         self.build()
 
     def toggle_sound(self):
