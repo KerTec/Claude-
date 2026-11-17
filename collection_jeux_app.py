@@ -33,6 +33,7 @@ import gc
 import hashlib
 import html as htmllib
 import json
+import math
 import os
 import random
 import re
@@ -90,7 +91,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.78 (17/11/2026)"
+APP_VERSION = "3.80 (17/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -6744,6 +6745,306 @@ def shake(view, done, turns=5):
     step(0)
 
 
+# ---------------------------------------------------------------- sons et images du jeu
+SOUNDS = {
+    "hit": "casino:CardShove2", "tear": "casino:CardOpenPackage2", "deal": "casino:CardFan1",
+    "flip": "casino:CardSlide4", "rare": "game:Ding_3", "epic": "arcade:Powerup_1",
+    "legend": "arcade:Powerup_3", "coin": "arcade:Coin_2", "buy": "ui:switch10",
+    "error": "game:Error", "new": "ui:click3",
+}
+_SOUND = {"on": None, "last": 0.0}
+
+
+def sound_on():
+    if _SOUND["on"] is None:
+        d = read_json(CARDS_ACTIVE)
+        _SOUND["on"] = not (isinstance(d, dict) and d.get("mute"))
+    return _SOUND["on"]
+
+
+def set_sound(on):
+    _SOUND["on"] = bool(on)
+    d = read_json(CARDS_ACTIVE)
+    d = d if isinstance(d, dict) else {}
+    d["mute"] = not on
+    try:
+        write_json(CARDS_ACTIVE, d)
+    except OSError:
+        pass
+
+
+def sfx(name, volume=0.6):
+    """Petit son du jeu (silencieux si le son est coupé ou indisponible)."""
+    if not sound_on():
+        return
+    now = time.time()
+    if name == "hit" and now - _SOUND["last"] < 0.06:      # pas de mitraillette
+        return
+    _SOUND["last"] = now
+    try:
+        import sound
+        sound.play_effect(SOUNDS.get(name, name), volume)
+    except Exception:
+        pass
+
+
+_ART_CACHE = {}
+
+
+def pack_image(color, w, h, golden=False):
+    """Dessin d'un booster : sachet à bords dentelés, reflet en biais, emblème."""
+    key = ("pack", str(color), int(w), int(h), golden)
+    if key in _ART_CACHE:
+        return _ART_CACHE[key]
+    img = None
+    try:
+        c = rgba(color)
+        teeth = max(6, int(w / 14))
+        tw = w / float(teeth)
+        th = max(4.0, h * 0.03)
+        with ui.ImageContext(w, h) as ctx:
+            body = ui.Path()
+            body.move_to(0, th)
+            for i in range(teeth):                       # dents du haut
+                body.line_to((i + 0.5) * tw, 0)
+                body.line_to((i + 1) * tw, th)
+            body.line_to(w, h - th)
+            for i in range(teeth):                       # dents du bas
+                body.line_to(w - (i + 0.5) * tw, h)
+                body.line_to(w - (i + 1) * tw, h - th)
+            body.close()
+            ui.set_color(c)
+            body.fill()
+            body.add_clip()
+            for i, a in enumerate((0.22, 0.10, 0.0, 0.10, 0.22)):   # volume du sachet
+                ui.set_color((0, 0, 0, a))
+                ui.fill_rect(w * i / 5.0, 0, w / 5.0 + 1, h)
+            ui.set_color((1, 1, 1, 0.20))                # reflet en biais
+            shine = ui.Path()
+            shine.move_to(w * 0.10, 0)
+            shine.line_to(w * 0.42, 0)
+            shine.line_to(w * 0.12, h)
+            shine.line_to(-w * 0.20, h)
+            shine.close()
+            shine.fill()
+            ui.set_color((0, 0, 0, 0.28))                # soudures haut et bas
+            ui.fill_rect(0, th + h * 0.045, w, max(1.5, h * 0.008))
+            ui.fill_rect(0, h - th - h * 0.05, w, max(1.5, h * 0.008))
+            r = min(w, h) * 0.26                         # emblème
+            cx, cy = w / 2.0, h * 0.62
+            ui.set_color((1, 1, 1, 0.92) if not golden else (1.0, 0.95, 0.6, 1.0))
+            ui.Path.oval(cx - r, cy - r, 2 * r, 2 * r).fill()
+            ui.set_color((0, 0, 0, 0.18))
+            ui.Path.oval(cx - r * 0.78, cy - r * 0.78, 1.56 * r, 1.56 * r).fill()
+            ui.draw_string("★", (cx - r, cy - r * 0.72, 2 * r, r * 1.5),
+                           ("<System-Bold>", r * 1.15), (c[0], c[1], c[2], 1.0),
+                           ui.ALIGN_CENTER)
+            img = ctx.get_image()
+    except Exception:
+        img = None
+    if len(_ART_CACHE) > 30:
+        _ART_CACHE.clear()
+    _ART_CACHE[key] = img
+    return img
+
+
+def back_image(color, w, h):
+    """Dos d'une carte : cadre, losanges et emblème."""
+    key = ("back", str(color), int(w), int(h))
+    if key in _ART_CACHE:
+        return _ART_CACHE[key]
+    img = None
+    try:
+        c = rgba(color)
+        with ui.ImageContext(w, h) as ctx:
+            ui.Path.rounded_rect(0, 0, w, h, 10).add_clip()
+            ui.set_color(c)
+            ui.fill_rect(0, 0, w, h)
+            ui.set_color((0, 0, 0, 0.22))
+            ui.fill_rect(0, h * 0.5, w, h * 0.5)
+            ui.set_color((1, 1, 1, 0.13))                # losanges
+            step = max(14.0, w / 5.0)
+            x = -h
+            while x < w + h:
+                for sign in (1, -1):
+                    p = ui.Path()
+                    p.line_width = 2
+                    p.move_to(x, 0 if sign > 0 else h)
+                    p.line_to(x + h, h if sign > 0 else 0)
+                    p.stroke()
+                x += step
+            ui.set_color((1, 1, 1, 0.75))                # cadre
+            frame = ui.Path.rounded_rect(5, 5, w - 10, h - 10, 7)
+            frame.line_width = 2
+            frame.stroke()
+            r = min(w, h) * 0.24
+            ui.set_color((1, 1, 1, 0.92))
+            ui.Path.oval(w / 2.0 - r, h / 2.0 - r, 2 * r, 2 * r).fill()
+            ui.draw_string("★", (w / 2.0 - r, h / 2.0 - r * 0.72, 2 * r, r * 1.5),
+                           ("<System-Bold>", r * 1.15), (c[0], c[1], c[2], 1.0),
+                           ui.ALIGN_CENTER)
+            img = ctx.get_image()
+    except Exception:
+        img = None
+    if len(_ART_CACHE) > 30:
+        _ART_CACHE.clear()
+    _ART_CACHE[key] = img
+    return img
+
+
+def art_view(img, frame, color, radius=10):
+    """Image dessinée, ou un simple rectangle de couleur si le dessin a échoué."""
+    if img is None:
+        v = ui.View(frame=frame, background_color=color)
+        v.corner_radius = radius
+        return v
+    v = ui.ImageView(frame=frame)
+    v.content_mode = ui.CONTENT_SCALE_TO_FILL
+    v.image = img
+    return v
+
+
+def clip(view):
+    """Coupe ce qui dépasse de la vue (pour le reflet). Renvoie True si c'est fait."""
+    try:
+        view.objc_instance.setClipsToBounds_(True)
+        return True
+    except Exception:
+        return False
+
+
+def particles(parent, x, y, colors, n=10, spread=90, size=7, duration=0.6):
+    """Éclats qui partent d'un point et s'effacent."""
+    for i in range(n):
+        p = ui.View(frame=(x - size / 2.0, y - size / 2.0, size, size),
+                    background_color=random.choice(colors))
+        p.corner_radius = size / 2.0 if i % 2 else 1
+        p.touch_enabled = False
+        parent.add_subview(p)
+        angle = random.random() * 6.283
+        dist = spread * (0.4 + random.random() * 0.6)
+        tx, ty = x + math.cos(angle) * dist, y + math.sin(angle) * dist + 20
+
+        def fly(p=p, tx=tx, ty=ty):
+            p.frame = (tx, ty, size * 0.5, size * 0.5)
+            p.alpha = 0.0
+
+        def gone(p=p):
+            try:
+                parent.remove_subview(p)
+            except Exception:
+                pass
+        animate(fly, duration * (0.7 + random.random() * 0.5), gone)
+
+
+def shockwave(parent, x, y, color, size=60):
+    """Anneau de couleur qui grandit et s'efface autour d'un point."""
+    ring = ui.View(frame=(x - size / 2.0, y - size / 2.0, size, size))
+    ring.corner_radius = size / 2.0
+    ring.border_width = 4
+    ring.border_color = color
+    ring.touch_enabled = False
+    parent.add_subview(ring)
+
+    def grow():
+        try:
+            set_transform(ring, ui.Transform.scale(4.5, 4.5))
+        except Exception:
+            pass
+        ring.alpha = 0.0
+
+    def gone():
+        try:
+            parent.remove_subview(ring)
+        except Exception:
+            pass
+    animate(grow, 0.55, gone)
+
+
+def screen_shake(view, strength=8, turns=6):
+    """Secousse de tout l'écran (carte légendaire)."""
+    def step(i):
+        if i >= turns:
+            animate(lambda: set_transform(view, ui.Transform()), 0.05)
+            return
+        try:
+            tr = ui.Transform.translation(strength * (1 if i % 2 else -1) * (1 - i / float(turns)),
+                                          random.randint(-3, 3))
+        except Exception:
+            return
+        animate(lambda: set_transform(view, tr), 0.045, lambda: step(i + 1))
+    step(0)
+
+
+def banner(parent, text, color, y):
+    """Grand texte qui surgit, reste un instant puis s'efface."""
+    lbl = make_label(text, (0, y, parent.width, 44), 30, True, color, "center")
+    lbl.touch_enabled = False
+    parent.add_subview(lbl)
+    try:
+        set_transform(lbl, ui.Transform.scale(0.2, 0.2))
+    except Exception:
+        pass
+
+    def gone():
+        try:
+            parent.remove_subview(lbl)
+        except Exception:
+            pass
+    animate(lambda: set_transform(lbl, ui.Transform()), 0.25,
+            lambda: animate_after(lambda: setattr(lbl, "alpha", 0.0), 0.4, 1.0, gone))
+
+
+def confetti(parent, colors, n=36):
+    """Pluie de confettis qui tombent du haut de l'écran (carte légendaire)."""
+    w, h = parent.width, parent.height
+    for i in range(n):
+        size = random.randint(6, 11)
+        x = random.random() * w
+        p = ui.View(frame=(x, -20, size, size * 1.6), background_color=random.choice(colors))
+        p.touch_enabled = False
+        parent.add_subview(p)
+        try:
+            set_transform(p, ui.Transform.rotation(random.random() * 3))
+        except Exception:
+            pass
+
+        def fall(p=p, x=x):
+            p.frame = (x + random.randint(-50, 50), h + 20, p.width, p.height)
+            p.alpha = 0.3
+
+        def gone(p=p):
+            try:
+                parent.remove_subview(p)
+            except Exception:
+                pass
+        animate_after(fall, 1.4 + random.random() * 1.2, random.random() * 0.5, gone)
+
+
+def shine(card, w, h):
+    """Reflet blanc qui traverse la carte (cartes rares)."""
+    if not clip(card):
+        return
+    band = ui.View(frame=(-w * 0.6, -h * 0.2, w * 0.35, h * 1.4),
+                   background_color=(1, 1, 1, 0.38))
+    band.touch_enabled = False
+    try:
+        set_transform(band, ui.Transform.rotation(0.35))
+    except Exception:
+        pass
+    card.add_subview(band)
+
+    def sweep():
+        band.frame = (w * 1.3, -h * 0.2, w * 0.35, h * 1.4)
+
+    def gone():
+        try:
+            card.remove_subview(band)
+        except Exception:
+            pass
+    animate_after(sweep, 0.55, 0.1, gone)
+
+
 # ---------------------------------------------------------------- parties (sauvegardes)
 def active_slot():
     d = read_json(CARDS_ACTIVE)
@@ -6820,6 +7121,11 @@ class GameMenuScreen(Screen):
     def play(self):
         self.nav.push(CardsScreen(self.app, self.nav))
 
+    def toggle_sound(self):
+        set_sound(not sound_on())
+        sfx("buy")
+        self.build()
+
     def set_mode(self, mode):
         self.mode = mode
         self.build()
@@ -6886,6 +7192,10 @@ class GameMenuScreen(Screen):
             self.add_subview(make_button("📂  Charger une partie", (x, y, bw, 50),
                                          lambda s: self.set_mode("charger"), t["card"],
                                          t["accent"], 17))
+            y += 50 + 12
+            self.add_subview(make_button("🔊  Son : oui" if sound_on() else "🔇  Son : non",
+                                         (x, y, bw, 40), lambda s: self.toggle_sound(),
+                                         t["bg"], t["sub"], 14))
             pulse(self.logo, 1.25, 0.5)
             return
         self.add_subview(make_label("Nouvelle partie : choisis un emplacement"
@@ -7002,6 +7312,12 @@ class CardsScreen(Screen):
         self.show_coins()
         if self.tap_btn is not None:
             pulse(self.tap_btn, 1.08, 0.12)
+            f = self.tap_btn.frame
+            particles(self.scroll, f[0] + f[2] * random.uniform(0.2, 0.8), f[1] + f[3] / 2,
+                      ["#ffd60a", "#ff9f0a", "white"], 14 if crit else 3, 90 if crit else 45,
+                      8 if crit else 5, 0.5)
+            if crit:
+                shockwave(self.scroll, f[0] + f[2] / 2, f[1] + f[3] / 2, "#ff453a", 80)
         self.floating(self.tap_btn, ("CRITIQUE +%s" if crit else "+%s") % big(power),
                       "#ff453a" if crit else "#ffd60a", 22 if crit else 18)
         if box.taps % 25 == 0:
@@ -7014,10 +7330,16 @@ class CardsScreen(Screen):
             hud("Aucun doublon à vendre : ouvre des boosters", "error", 1.0)
             return
         haptic(0)
+        sfx("coin")
         self.show_coins()
         self.show_stock()
         if self.sell_btn is not None:
             pulse(self.sell_btn, 1.06, 0.12)
+            f = self.sell_btn.frame
+            particles(self.scroll, f[0] + f[2] / 2, f[1] + f[3] / 2, ["#ffd60a", "#ff9f0a"], 8,
+                      70, 8, 0.5)
+        if self.coin_lbl is not None:
+            pulse(self.coin_lbl, 1.12, 0.2)
         self.floating(self.sell_btn, "+%s" % big(total), UP, 20)
 
     def show_stock(self):
@@ -7127,14 +7449,15 @@ class CardsScreen(Screen):
             row.corner_radius = 16
             row.alpha = 1.0 if can else 0.45
             row.add_subview(gradient_view((0, 0, cw, 96), "white", 16, 0.35))
-            row.add_subview(make_label(("" if ok else "🔒 ") + name, (16, 10, cw - 140, 26), 20,
+            row.add_subview(art_view(pack_image(color, 52, 78), (12, 9, 52, 78), color, 8))
+            row.add_subview(make_label(("" if ok else "🔒 ") + name, (76, 10, cw - 200, 26), 19,
                                        True, "white"))
             row.add_subview(make_label("%s  •  résistance %d" % (
-                plural(box.pack_size(kind), "carte"), hp), (16, 38, cw - 140, 16), 12, False,
+                plural(box.pack_size(kind), "carte"), hp), (76, 38, cw - 200, 16), 12, False,
                 (1, 1, 1, 0.9)))
             row.add_subview(make_label("  ".join("%s %s %%" % ("★" * (i + 1), (
                 "%g" % odds[i]).replace(".", ",")) for i in range(5) if odds[i]),
-                (16, 60, cw - 32, 28), 10, False, (1, 1, 1, 0.85), "left", 2))
+                (76, 58, cw - 88, 30), 10, False, (1, 1, 1, 0.85), "left", 2))
             pill, _ = make_pill((("OFFERT" if box.gift() else "GRATUIT") if not cost
                                  else "🪙 %s" % big(cost)) if ok else
                                 "Boutique +1", (cw - 122, 14, 108, 30), 14, (0, 0, 0, 0.4))
@@ -7190,6 +7513,7 @@ class TechScreen(Screen):
             hud("Il te manque %s pièces" % big(box.cost(key) - box.coins), "error", 1.2)
         else:
             haptic(2)
+            sfx("buy")
             log("Cartes : amélioration %s (%s) niveau %d" % (key, t[3], box.level(key)))
             offset = self.scroll.content_offset
             self.build()
@@ -7197,6 +7521,9 @@ class TechScreen(Screen):
             node = self.nodes.get(key)
             if node is not None:
                 pulse(node, 1.2, 0.3)
+                f = node.frame
+                particles(self.scroll, f[0] + f[2] / 2, f[1] + f[3] / 2,
+                          [TECH_BRANCHES[t[1]][1], "white"], 10, 70, 7, 0.5)
             if box.level(key) == 1:
                 flash(self, TECH_BRANCHES[t[1]][1], 0.3)
 
@@ -7283,8 +7610,8 @@ STATUS_TAG = {"nouveau": ("NOUVEAU", "#ff2d55"), "mieux": ("MEILLEURE", "#ffd60a
 
 @guard_class
 class PackScreen(Screen):
-    """Ouverture d'un booster : il faut le taper jusqu'à ce qu'il cède, puis les cartes
-    sont distribuées et on les retourne une par une."""
+    """Ouverture d'un booster : on tape le sachet (il se déchire peu à peu), il s'ouvre,
+    les cartes sont distribuées face cachée, puis on les retourne."""
 
     def __init__(self, app, nav, pack, status, kind=0, golden=False):
         super().__init__()
@@ -7303,10 +7630,27 @@ class PackScreen(Screen):
         self.slots = {}             # index -> vue affichée
         self.bottom = []            # boutons et textes sous les cartes
         self.waiting = {}           # adresse de jaquette -> image à remplir
-        self.pack_view = self.hp_fill = self.hp_lbl = None
+        self.pack_view = self.flap = self.rip = self.hp_lbl = None
+        self.glowing = []           # dos de cartes rares (clignotent)
+        self.ticks = 0
 
     def layout(self):
         self.build()
+
+    def idle(self):
+        """Sachet qui flotte avant l'ouverture, lueur qui bat sur les cartes rares."""
+        self.ticks += 1
+        if not self.torn and self.pack_view is not None and not self.busy and \
+                self.ticks % 6 == 0:
+            f = self.pack_view.frame
+            if not hasattr(self, "rest_y"):
+                self.rest_y = f[1]
+            up = (self.ticks // 6) % 2 == 0
+            animate(lambda: setattr(self.pack_view, "frame", (f[0], self.rest_y - (6 if up
+                    else 0), f[2], f[3])), 1.4)
+        if self.torn and self.glowing and self.ticks % 3 == 0:
+            for card in self.glowing:
+                card.alpha = 1.0 if (self.ticks // 3) % 2 else 0.72
 
     def on_cover(self, url):
         iv = self.waiting.pop(url, None)
@@ -7329,43 +7673,43 @@ class PackScreen(Screen):
     def build(self, deal=False):
         for v in list(self.subviews):
             self.remove_subview(v)
-        self.slots, self.bottom = {}, []
+        self.slots, self.bottom, self.glowing = {}, [], []
         w, h = self.width, self.height
         if w < 50:
             return
         t = self.app.theme
-        color = self.color
         if not self.torn:
-            pw, ph = min(220, w - 120), min(320, h - 240)
-            pack = ui.View(frame=((w - pw) / 2, (h - ph) / 2 - 50, pw, ph),
-                           background_color=color)
-            pack.corner_radius = 18
-            pack.add_subview(gradient_view((0, 0, pw, ph), "white", 18, 0.4))
+            self.add_subview(gradient_view((0, 0, w, h * 0.7), self.color, 0, 0.35))
+            if hasattr(self, "rest_y"):
+                del self.rest_y
+            ph = min(340, h - 230)
+            pw = min(ph * 0.68, w - 110)
+            px, py = (w - pw) / 2, (h - ph) / 2 - 50
+            pack = ui.View(frame=(px, py, pw, ph))
+            pack.add_subview(art_view(pack_image(self.color, pw, ph, self.golden),
+                                      (0, 0, pw, ph), self.color, 18))
             pack.add_subview(make_label("★ BOOSTER DORÉ ★" if self.golden else
-                                        "TOUTES CONSOLES",
-                                        (0, ph * 0.3, pw, 20), 14, True, (1, 1, 1, 0.9),
-                                        "center"))
-            pack.add_subview(make_label(self.family, (8, ph * 0.3 + 26, pw - 16, 70), 26, True,
-                                        "white", "center", 2))
-            pack.add_subview(make_label(plural(len(self.pack), "carte"), (0, ph - 46, pw, 20),
-                                        13, False, (1, 1, 1, 0.9), "center"))
+                                        "TOUTES CONSOLES", (0, ph * 0.13, pw, 18), 12, True,
+                                        (1, 1, 1, 0.9), "center"))
+            pack.add_subview(make_label(self.family.upper(), (6, ph * 0.19, pw - 12, 60), 22,
+                                        True, "white", "center", 2))
+            pack.add_subview(make_label(plural(len(self.pack), "carte"), (0, ph * 0.87, pw, 18),
+                                        12, True, (1, 1, 1, 0.9), "center"))
+            # déchirure : trait blanc qui avance en haut du sachet à chaque tape
+            self.rip = ui.View(frame=(0, ph * 0.075, 0, 3), background_color="white")
+            self.rip.touch_enabled = False
+            pack.add_subview(self.rip)
             b = ui.Button(frame=(0, 0, pw, ph))
             b.action = lambda s: self.hit()
             pack.add_subview(b)
             self.add_subview(pack)
             self.pack_view = pack
-            y = (h + ph) / 2 - 30
-            track = ui.View(frame=(50, y, w - 100, 16), background_color=t["field"])
-            track.corner_radius = 8
-            self.hp_fill = ui.View(frame=(0, 0, w - 100, 16), background_color="#ff453a")
-            self.hp_fill.corner_radius = 8
-            track.add_subview(self.hp_fill)
-            self.add_subview(track)
-            self.hp_lbl = make_label("", (0, y + 22, w, 20), 14, True, t["text"], "center")
+            y = py + ph + 16
+            self.hp_lbl = make_label("", (0, y, w, 20), 14, True, t["text"], "center")
             self.add_subview(self.hp_lbl)
             hint = make_label("Tape le booster pour le déchirer !  (%d dégât%s par tape)" % (
                 self.app.cards.damage(), "s" if self.app.cards.damage() > 1 else ""),
-                (0, y + 46, w, 20), 13, False, t["sub"], "center")
+                (0, y + 24, w, 20), 13, False, t["sub"], "center")
             self.add_subview(hint)
             self.bottom = [hint]
             self.show_hp()
@@ -7377,22 +7721,29 @@ class PackScreen(Screen):
                 card.frame = (w / 2 - target[2] / 2, h / 2 - target[3] / 2, target[2],
                               target[3])
                 card.alpha = 0.0
+                try:
+                    set_transform(card, ui.Transform.rotation(random.uniform(-0.5, 0.5)))
+                except Exception:
+                    pass
 
                 def place(card=card, target=target):
                     card.frame = target
                     card.alpha = 1.0
-                animate_after(place, 0.28, 0.08 * i)
+                    set_transform(card, ui.Transform())
+                animate_after(place, 0.3, 0.09 * i)
+        if deal:
+            sfx("deal")
         self.refresh_bottom()
 
     def show_hp(self):
-        if self.hp_fill is not None:
-            full = self.width - 100
-            self.hp_fill.frame = (0, 0, max(0, full * self.hp / float(self.hp_max)), 16)
+        if self.rip is not None and self.pack_view is not None:
+            done = 1.0 - max(0, self.hp) / float(self.hp_max)
+            self.rip.frame = (0, self.rip.frame[1], self.pack_view.width * done, 3)
         if self.hp_lbl is not None:
             self.hp_lbl.text = "Résistance : %d / %d" % (max(0, self.hp), self.hp_max)
 
     def hit(self):
-        """Une tape sur le booster : il perd des points, tremble, puis cède."""
+        """Une tape sur le booster : il perd des points, tremble, se déchire, puis cède."""
         if self.torn or self.busy:
             return
         dmg = self.app.cards.damage()
@@ -7404,15 +7755,68 @@ class PackScreen(Screen):
         pack = self.pack_view
         if pack is not None:
             f = pack.frame
-            float_text(self, ("💥 -%d" if smash else "-%d") % dmg,
-                       f[0] + f[2] / 2 + random.randint(-60, 60), f[1] + 10,
-                       "#ffd60a" if smash else "#ff453a", 26 if smash else 20)
+            hx, hy = f[0] + f[2] * random.uniform(0.2, 0.8), f[1] + f[3] * random.uniform(0.2, 0.7)
+            float_text(self, ("💥 -%d" if smash else "-%d") % dmg, hx, hy - 20,
+                       "#ffd60a" if smash else "white", 26 if smash else 20)
+            particles(self, hx, hy, ["white", self.color, "#ffd60a"], 10 if smash else 5,
+                      70 if smash else 45, 6, 0.45)
         if self.hp > 0:
-            haptic(0)
-            if pack is not None:
-                pulse(pack, 0.94, 0.1)
+            haptic(1 if smash else 0)
+            sfx("hit")
+            if self.hp <= self.hp_max * 0.3:      # presque ouvert : le suspense monte
+                flash(self, self.color, 0.18)
+            if pack is not None:              # le sachet encaisse : il penche et se tasse
+                try:
+                    tr = ui.Transform.rotation(random.choice((-1, 1)) * 0.05) \
+                        .concat(ui.Transform.scale(0.95, 0.95))
+                    set_transform(pack, tr)
+                    animate(lambda: set_transform(pack, ui.Transform()), 0.12)
+                except Exception:
+                    pulse(pack, 0.95, 0.1)
             return
         self.tear()
+
+    def tear(self):
+        """Le sachet tremble, se déchire (le haut s'envole), les cartes jaillissent."""
+        if self.torn or self.busy:
+            return
+        self.busy = True
+        haptic(1)
+        sfx("tear")
+        pack = self.pack_view
+
+        def opened():
+            self.torn = True
+            self.busy = False
+            haptic(2)
+            self.build(deal=True)
+            flash(self, "white", 0.55)
+
+        def burst():
+            f = pack.frame
+            particles(self, f[0] + f[2] / 2, f[1] + 20, ["white", self.color, "#ffd60a",
+                                                         "#ff2d55"], 18, 150, 8, 0.7)
+            flap = ui.View(frame=(f[0], f[1], f[2], f[3] * 0.09), background_color=self.color)
+            flap.touch_enabled = False
+            self.add_subview(flap)
+
+            def fly():                        # le haut déchiré s'envole
+                flap.frame = (f[0] + f[2] * 0.5, f[1] - 160, f[2], f[3] * 0.09)
+                flap.alpha = 0.0
+                try:
+                    set_transform(flap, ui.Transform.rotation(0.9))
+                except Exception:
+                    pass
+            animate(fly, 0.4)
+
+            def drop():                       # le sachet vide glisse vers le bas
+                pack.frame = (f[0], f[1] + 120, f[2], f[3])
+                pack.alpha = 0.0
+            animate(drop, 0.3, opened)
+        if pack is None:
+            opened()
+        else:
+            shake(pack, burst, 7)
 
     def refresh_bottom(self):
         for v in self.bottom:
@@ -7444,17 +7848,23 @@ class PackScreen(Screen):
             if c["perdu"]:
                 parts.append("%d perdu%s (stock plein)" % (c["perdu"],
                                                            "s" if c["perdu"] > 1 else ""))
-            self.bottom.append(make_label("  •  ".join(parts), (10, y, w - 20, 20), 13, True,
-                                          DOWN if c["perdu"] else RARITY[best][3], "center"))
-            self.bottom.append(make_button("Continuer", (40, y + 28, w - 80, 44),
-                                           lambda s: self.nav.pop(), t["accent"], "white", 15))
+            summary = make_label("  •  ".join(parts), (10, y, w - 20, 20), 13, True,
+                                 DOWN if c["perdu"] else RARITY[best][3], "center")
+            self.bottom.append(summary)
+            go = make_button("Continuer", (40, y + 28, w - 80, 44), lambda s: self.nav.pop(),
+                             t["accent"], "white", 15)
+            self.bottom.append(go)
         for v in self.bottom:
             self.add_subview(v)
+        if not left and self.bottom:
+            pulse(self.bottom[-1], 1.08, 0.3)
 
     def show_slot(self, i):
         old = self.slots.pop(i, None)
         if old is not None:
             self.remove_subview(old)
+            if old in self.glowing:
+                self.glowing.remove(old)
         frame = self.card_frame(i)
         label, g, tier, var = self.pack[i]
         if self.shown[i]:
@@ -7466,11 +7876,15 @@ class PackScreen(Screen):
             if self.status[i] == "perdu":
                 card.alpha = 0.55
         else:
-            card = ui.View(frame=frame, background_color=self.color)
-            card.corner_radius = 10
-            card.add_subview(gradient_view((0, 0, frame[2], frame[3]), "white", 10, 0.3))
-            card.add_subview(make_label("?", (0, 0, frame[2], frame[3]), 44, True,
-                                        (1, 1, 1, 0.85), "center"))
+            card = ui.View(frame=frame)
+            card.add_subview(art_view(back_image(self.color, frame[2], frame[3]),
+                                      (0, 0, frame[2], frame[3]), self.color))
+            if tier >= 2 or var:                  # la lueur trahit une belle carte
+                glow = VARIANTS[var][4] or RARITY[tier][3]
+                card.border_width = 2 + (tier >= 3)
+                card.border_color = glow
+                card.corner_radius = 10
+                self.glowing.append(card)
             b = ui.Button(frame=(0, 0, frame[2], frame[3]))
             b.action = lambda s, i=i: self.flip(i)
             card.add_subview(b)
@@ -7478,32 +7892,36 @@ class PackScreen(Screen):
         self.slots[i] = card
         return card
 
-    def tear(self):
-        """Le paquet tremble, gonfle et disparaît ; les cartes sont distribuées."""
-        if self.torn or self.busy:
-            return
-        self.busy = True
-        haptic(1)
-        pack = self.pack_view
-
-        def opened():
-            self.torn = True
-            self.busy = False
-            haptic(2)
-            self.build(deal=True)
-
-        def burst():
-            def grow():
-                try:
-                    set_transform(pack, ui.Transform.scale(1.25, 1.25))
-                except Exception:
-                    pass
-                pack.alpha = 0.0
-            animate(grow, 0.22, opened)
-        if pack is None:
-            opened()
-        else:
-            shake(pack, burst)
+    def reveal_fx(self, i, card):
+        """Effets à l'apparition d'une carte, de plus en plus forts avec la rareté."""
+        label, g, tier, var = self.pack[i]
+        f = card.frame
+        cx, cy = f[0] + f[2] / 2, f[1] + f[3] / 2
+        color = VARIANTS[var][4] or RARITY[tier][3]
+        status = self.status[i]
+        if tier >= 2 or var:
+            pulse(card, 1.18, 0.28)
+            shine(card, f[2], f[3])
+            particles(self, cx, cy, [color, "white"], 8 + 4 * tier, 60 + 25 * tier, 7, 0.6)
+        elif status in ("nouveau", "mieux"):
+            pulse(card, 1.08, 0.18)
+        if tier >= 3 or var >= 2:
+            shockwave(self, cx, cy, color, min(f[2], 90))
+            flash(self, color, 0.5 if tier == 4 or var == 3 else 0.3)
+        if tier == 4 or var == 3:
+            confetti(self, [color, "#ffd60a", "white", "#ff2d55", "#34c759"])
+            screen_shake(self)
+            banner(self, "★ LÉGENDAIRE ★" if tier == 4 else "👑 CARTE EN OR 👑", color,
+                   max(10, f[1] - 50))
+            particles(self, cx, cy, ["#ffd60a", "white", color], 26, 220, 9, 1.0)
+            sfx("legend", 0.9)
+        elif tier == 3 or var == 2:
+            sfx("epic", 0.8)
+        elif tier == 2 or var == 1:
+            sfx("rare", 0.7)
+        elif status in ("nouveau", "mieux"):
+            sfx("new", 0.5)
+        haptic(2 if tier >= 3 or var >= 2 else (1 if tier >= 2 else 0))
 
     def flip(self, i, quiet=False, more=None):
         """Retourne une carte : elle pivote, puis montre sa face. Avec « Mains rapides »,
@@ -7517,41 +7935,37 @@ class PackScreen(Screen):
             if rest:
                 self.flip(rest[0], quiet=True, more=more - 1)
         back = self.slots.get(i)
-        label, g, tier, var = self.pack[i]
+        sfx("flip", 0.5)
 
         def reveal():
             card = self.show_slot(i)
             try:
-                set_transform(card, ui.Transform.scale(0.03, 1.0))
+                set_transform(card, ui.Transform.scale(0.03, 1.08))
             except Exception:
                 pass
-
-            def landed():
-                if tier >= 2 or var:
-                    pulse(card, 1.15, 0.25)
-                if tier >= 3 or var >= 2:
-                    flash(self, VARIANTS[var][4] or RARITY[tier][3],
-                          0.5 if tier == 4 or var == 3 else 0.3)
-            animate(lambda: set_transform(card, ui.Transform()), 0.14, landed)
-        haptic(2 if tier >= 3 or var >= 2 else 0)
-        if tier == 4:
-            hud("🌟 LÉGENDAIRE : %s" % g, "success", 1.5)
-        elif var == 3:
-            hud("👑 CARTE EN OR : %s" % g, "success", 1.5)
+            animate(lambda: set_transform(card, ui.Transform()), 0.16,
+                    lambda: self.reveal_fx(i, card))
         try:
-            squeeze = ui.Transform.scale(0.03, 1.0)
+            squeeze = ui.Transform.scale(0.03, 1.08)
         except Exception:
             squeeze = None
         if back is None or squeeze is None:
             reveal()
         else:
-            animate(lambda: set_transform(back, squeeze), 0.12, reveal)
+            animate(lambda: set_transform(back, squeeze), 0.13, reveal)
         if not quiet:
             self.refresh_bottom()
 
     def flip_all(self):
-        for i in range(len(self.pack)):
-            self.flip(i, quiet=True, more=0)
+        """Retourne toutes les cartes restantes, l'une après l'autre."""
+        rest = [i for i in range(len(self.pack)) if not self.shown[i]]
+        for n, i in enumerate(rest):
+            self.shown[i] = True
+
+            def turn(i=i):
+                self.shown[i] = False
+                self.flip(i, quiet=True, more=0)
+            animate_after(lambda: None, 0.01, 0.12 * n, turn)
         self.refresh_bottom()
 
 
