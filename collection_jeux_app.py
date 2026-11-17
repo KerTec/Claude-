@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.77 (17/11/2026)"
+APP_VERSION = "3.78 (17/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -7024,7 +7024,7 @@ class CardsScreen(Screen):
         box = self.app.cards
         d = box.doubles()
         if self.stock_lbl is not None:
-            self.stock_lbl.text = "Doublons en stock : %d / %d%s" % (
+            self.stock_lbl.text = "🎒 Sac de doublons : %d / %d%s" % (
                 d, box.capacity(), "  (PLEIN)" if d >= box.capacity() else "")
             self.stock_lbl.text_color = DOWN if d >= box.capacity() else self.app.theme["sub"]
         if self.sell_btn is not None:
@@ -7088,8 +7088,8 @@ class CardsScreen(Screen):
             self.tap_btn.corner_radius = 26
             sv.add_subview(self.tap_btn)
             y += 84 + 12
-        # --- vendre (dès le premier doublon)
-        if box.doubles() or box.sold:
+        # --- sac de doublons et vente (dès que la Boutique est ouverte)
+        if box.level("s1") or box.doubles() or box.sold:
             self.sell_btn = make_button("", (pad + 20, y, cw - 40, 56), lambda s: self.sell(),
                                         "#34c759", "white", 15)
             self.sell_btn.corner_radius = 18
@@ -8558,12 +8558,12 @@ def write_marker(started, bg=False):
 
 
 def gc_setup():
-    """Ramasse-miettes de Python : presque jamais automatique (il pouvait se déclencher
+    """Ramasse-miettes de Python : jamais automatique (il pouvait se déclencher
     dans une tâche de fond et libérer des objets iOS au mauvais endroit : plantage dur
     « Garbage-collecting / objc_util __del__ »). Il est fait à la main, sur le fil de
     l'interface, par petites étapes (voir gc_step)."""
     try:
-        gc.set_threshold(50000, 50, 1000)
+        gc.disable()      # plus aucun passage automatique (même dans une tâche de fond)
     except Exception:
         pass
 
