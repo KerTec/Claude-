@@ -91,7 +91,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.82 (17/11/2026)"
+APP_VERSION = "3.83 (17/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -7458,6 +7458,9 @@ class CardsScreen(Screen):
         self.floats = []
         self.ticks = 0
         self.afford = None
+        self.hp = {}                # résistance restante des sachets de la boutique
+        self.rows = {}              # type de booster -> (ligne, dessin, barre, texte)
+        self.breaking = False
 
     def on_show(self):
         self.app.cards.save()
@@ -7549,6 +7552,68 @@ class CardsScreen(Screen):
             self.bag_btn.title = "🎒  Sac à dos  (%d / %d)%s" % (
                 d, box.capacity(), "  PLEIN" if d >= box.capacity() else "")
 
+    def shop_touch(self, kind, x, y, begin):
+        """Le doigt touche le sachet de la boutique : il encaisse, se déchire peu à peu, puis
+        éclate et les cartes sont distribuées. Plus besoin d'ouvrir un autre écran."""
+        box = self.app.cards
+        ref = self.rows.get(kind)
+        if ref is None or self.breaking or not box.unlocked(kind):
+            return
+        row, art, fill, lbl = ref
+        rf = row.frame
+        shade = pack_color_at(PACK_KINDS[kind][6], 200, 300, x / float(rf[2]) * 200,
+                              y / float(rf[3]) * 300)
+        light = tuple(min(1.0, v + (1 - v) * 0.45) for v in shade)
+        colors = [shade, shade, shade, light, "white"]
+        if not begin:                                    # doigt qui glisse : traînée
+            particles(self.scroll, rf[0] + x, rf[1] + y, colors, 3, 40, 5, 0.4)
+            return
+        cost = box.price(kind)
+        if kind not in self.hp:                          # premier coup : il faut pouvoir payer
+            if box.coins < cost:
+                hud("Pas assez de pièces (%s)" % big(cost), "error", 1.0)
+                sfx("error", 0.5)
+                return
+            self.hp[kind] = PACK_KINDS[kind][5]
+        dmg = box.damage()
+        smash = random.random() < box.smash_chance()
+        if smash:
+            dmg *= 5
+        self.hp[kind] -= dmg
+        total = PACK_KINDS[kind][5]
+        left = max(0, self.hp[kind])
+        fill.frame = (0, 0, max(0, (fill.superview.width) * left / float(total)), 8)
+        lbl.text = "%s  •  solidité %d / %d" % (plural(box.pack_size(kind), "carte"), left,
+                                               total)
+        float_text(self.scroll, ("💥 -%d" if smash else "-%d") % dmg, rf[0] + x, rf[1] + y - 20,
+                   "#ffd60a" if smash else "#ff453a", 36 if smash else 30, 90)
+        particles(self.scroll, rf[0] + x, rf[1] + y, colors, 40 if smash else 22,
+                  130 if smash else 95, 9 if smash else 7, 0.7)
+        shockwave(self.scroll, rf[0] + x, rf[1] + y, colors[0], 34)
+        if left > 0:
+            haptic(1 if smash else 0)
+            sfx("hit")
+            try:                                          # le sachet encaisse et se tasse
+                tr = ui.Transform.rotation(random.choice((-1, 1)) * 0.07) \
+                    .concat(ui.Transform.scale(0.9, 0.9))
+                set_transform(art, tr)
+                animate(lambda: set_transform(art, ui.Transform()), 0.12)
+            except Exception:
+                pulse(art, 0.9, 0.1)
+            return
+        self.breaking = True                              # dernier coup : il éclate
+        haptic(1)
+        sfx("tear")
+
+        def burst():
+            particles(self.scroll, rf[0] + rf[2] / 2, rf[1] + rf[3] / 2,
+                      [shade, light, "white", "#ffd60a"], 40, 170, 9, 0.8)
+            flash(self, "white", 0.5)
+            self.hp.pop(kind, None)
+            self.breaking = False
+            self.open_pack(kind)
+        shake(art, burst, 6)
+
     def open_pack(self, kind):
         box = self.app.cards
         cost = box.price(kind)
@@ -7568,7 +7633,7 @@ class CardsScreen(Screen):
         box.opened += 1
         box.save()                      # enregistré avant l'animation : rien n'est perdu
         log("Cartes : %s -> %s" % (PACK_KINDS[kind][0], ", ".join(g for _, g, _, _ in pack)))
-        self.nav.push(PackScreen(self.app, self.nav, pack, status, kind, golden))
+        self.nav.push(PackScreen(self.app, self.nav, pack, status, kind, golden, opened=True))
 
     def build(self):
         app, t, sv = self.app, self.app.theme, self.scroll
@@ -7623,8 +7688,10 @@ class CardsScreen(Screen):
                 "#ff9f0a" if ready else t["card"], "white" if ready else t["accent"], 14))
             y += 46 + 16
         # --- boutique : seulement les boosters débloqués
-        sv.add_subview(make_label("BOUTIQUE", (pad + 2, y, cw, 18), 13, True, t["sub"]))
+        sv.add_subview(make_label("BOUTIQUE  —  tape un booster pour le détruire !",
+                                  (pad + 2, y, cw, 18), 13, True, t["sub"]))
         y += 24
+        self.rows = {}
         shown = [k for k in range(len(PACK_KINDS)) if box.unlocked(k)]
         if not shown:
             sv.add_subview(make_label("La boutique est vide. Achète l'amélioration « Boutique » "
@@ -7636,35 +7703,46 @@ class CardsScreen(Screen):
             cost = box.price(kind)
             ok = box.unlocked(kind)
             can = ok and box.coins >= cost
-            row = ui.View(frame=(pad, y, cw, 96), background_color=color)
+            rh = 112
+            row = ui.View(frame=(pad, y, cw, rh), background_color=color)
             row.corner_radius = 16
-            row.alpha = 1.0 if can else 0.45
-            row.add_subview(gradient_view((0, 0, cw, 96), "white", 16, 0.35))
-            row.add_subview(art_view(pack_image(color, 52, 78), (12, 9, 52, 78), color, 8))
-            row.add_subview(make_label(("" if ok else "🔒 ") + name, (76, 10, cw - 200, 26), 19,
-                                       True, "white"))
-            row.add_subview(make_label("%s  •  résistance %d" % (
-                plural(box.pack_size(kind), "carte"), hp), (76, 38, cw - 200, 16), 12, False,
-                (1, 1, 1, 0.9)))
+            row.alpha = 1.0 if (can or kind in self.hp) else 0.45
+            row.add_subview(gradient_view((0, 0, cw, rh), "white", 16, 0.35))
+            art = art_view(pack_image(color, 58, 88), (12, 10, 58, 88), color, 8)
+            row.add_subview(art)
+            row.add_subview(make_label(name, (84, 10, cw - 220, 26), 19, True, "white"))
+            left = self.hp.get(kind, hp)
+            lbl = make_label("%s  •  solidité %d / %d" % (plural(box.pack_size(kind), "carte"),
+                                                       left, hp), (84, 38, cw - 96, 16), 12,
+                             False, (1, 1, 1, 0.9))
+            row.add_subview(lbl)
             row.add_subview(make_label("  ".join("%s %s %%" % ("★" * (i + 1), (
                 "%g" % odds[i]).replace(".", ",")) for i in range(5) if odds[i]),
-                (76, 58, cw - 88, 30), 10, False, (1, 1, 1, 0.85), "left", 2))
-            pill, _ = make_pill((("OFFERT" if box.gift() else "GRATUIT") if not cost
-                                 else "🪙 %s" % big(cost)) if ok else
-                                "Boutique +1", (cw - 122, 14, 108, 30), 14, (0, 0, 0, 0.4))
+                (84, 58, cw - 96, 30), 10, False, (1, 1, 1, 0.85), "left", 2))
+            pill, _ = make_pill(("OFFERT" if box.gift() else "GRATUIT") if not cost
+                                else "🪙 %s" % big(cost), (cw - 122, 14, 108, 30), 14,
+                                (0, 0, 0, 0.4))
             row.add_subview(pill)
-            b = ui.Button(frame=(0, 0, cw, 96))
-            b.action = lambda s, k=kind: self.open_pack(k)
-            row.add_subview(b)
+            track = ui.View(frame=(84, rh - 20, cw - 100, 8), background_color=(0, 0, 0, 0.35))
+            track.corner_radius = 4
+            fill = ui.View(frame=(0, 0, (cw - 100) * left / float(hp), 8),
+                           background_color="white")
+            fill.corner_radius = 4
+            track.add_subview(fill)
+            row.add_subview(track)
+            row.add_subview(TapView((0, 0, cw, rh),
+                                    lambda x, yy, begin, k=kind: self.shop_touch(k, x, yy, begin)))
             sv.add_subview(row)
-            y += 96 + 10
+            self.rows[kind] = (row, art, fill, lbl)
+            y += rh + 10
         sv.add_subview(make_label(
+            "Tape un booster : il se déchire sous ton doigt, puis les cartes sont distribuées. "
             "Chaque booster peut contenir n'importe quel jeu, toutes consoles confondues. "
             "Chaque niveau de « Boutique » ajoute un booster en vente. Une "
             "nouvelle carte rapporte 1 pièce ; les doublons se vendent, mais si ton stock est "
             "plein ils sont perdus. Jamais d'argent réel.",
-            (pad, y + 4, cw, 62), 11, False, t["sub"], "center", 4))
-        y += 74
+            (pad, y + 4, cw, 96), 11, False, t["sub"], "center", 7))
+        y += 108
         sv.content_size = (w, y)
 
 
@@ -7941,7 +8019,7 @@ class PackScreen(Screen):
     """Ouverture d'un booster : on tape le sachet (il se déchire peu à peu), il s'ouvre,
     les cartes sont distribuées face cachée, puis on les retourne."""
 
-    def __init__(self, app, nav, pack, status, kind=0, golden=False):
+    def __init__(self, app, nav, pack, status, kind=0, golden=False, opened=False):
         super().__init__()
         self.app, self.nav, self.kind = app, nav, kind
         self.family = PACK_KINDS[kind][0]
@@ -7952,7 +8030,8 @@ class PackScreen(Screen):
         self.background_color = app.theme["bg"]
         self.hp_max = PACK_KINDS[kind][5]
         self.hp = self.hp_max
-        self.torn = False
+        self.torn = bool(opened)    # sachet déjà détruit dans la boutique : cartes directes
+        self.deal_pending = bool(opened)
         self.busy = False           # animation d'ouverture en cours
         self.shown = [False] * len(pack)
         self.slots = {}             # index -> vue affichée
@@ -8005,6 +8084,9 @@ class PackScreen(Screen):
         w, h = self.width, self.height
         if w < 50:
             return
+        if self.torn and self.deal_pending:      # première image : on distribue les cartes
+            self.deal_pending = False
+            deal = True
         t = self.app.theme
         if not self.torn:
             self.add_subview(gradient_view((0, 0, w, h * 0.7), self.color, 0, 0.35))
