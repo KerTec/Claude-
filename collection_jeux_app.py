@@ -90,7 +90,7 @@ BASE = "https://www.pricecharting.com"
 # intégré affiche, pour passer la vérification. Les vraies pages sont téléchargées.
 LIGHT_URL = BASE + "/search-products?type=prices&q=zzqxjw"
 
-APP_VERSION = "3.75 (17/11/2026)"
+APP_VERSION = "3.76 (17/11/2026)"
 # Ce fichier est le CODE de l'app (gros) : il vit dans Documents/.collection_jeux/ et n'est
 # jamais ouvert dans l'éditeur. On lance l'app avec le petit collection_jeux.py.
 UPDATE_URL = "https://raw.githubusercontent.com/KerTec/Claude-/main/collection_jeux_app.py"
@@ -6262,42 +6262,55 @@ VARIANTS = [
     ("Or", "👑", 1, 20, "#ffd60a"),
 ]
 INFLATION = 5        # nombre de boosters ouverts pour +1 % sur le prix des boosters
-TECH_PRICE = 1.2     # réglages globaux des prix de l'arbre (durée de vie du jeu) :
-TECH_GROWTH = 1.3    # prix de départ, et vitesse à laquelle les niveaux renchérissent
+TECH_PRICE = 1.4     # réglages globaux des prix de l'arbre (durée de vie du jeu) :
+TECH_GROWTH = 1.0    # prix de départ, et vitesse à laquelle les niveaux renchérissent
 # arbre d'améliorations :
 # (clé, branche, rang, nom, effet par niveau, prix de départ, hausse, niveau max, prérequis)
 TECH = [
     ("s1", 1, 0, "Boutique", "+1 type de booster en vente", 2, 1.0, 5, []),
-    ("v1", 0, 1, "Doigt musclé", "bouton à taper : +1 pièce par tape", 20, 1.18, 50, ["s1"]),
-    ("v2", 0, 2, "Stockage", "+1 place de doublon", 15, 1.15, 50, ["v1"]),
+    # --- vente
+    ("w1", 0, 1, "Portefeuille", "pièces maximum ×10 (le surplus est perdu)", 80, 1.0, 5,
+     ["s1"]),
+    ("v2", 0, 2, "Stockage", "+1 place de doublon", 15, 1.15, 50, ["w1"]),
     ("v3", 0, 3, "Demande", "+1 doublon vendu par vente", 150, 1.4, 20, ["v2"]),
-    ("v4", 0, 4, "Valeur", "+50 % sur la vente des cartes", 300, 1.35, 30, ["v3"]),
-    ("v5", 0, 5, "Coup critique", "+3 % de tapes critiques", 2000, 2.0, 10, ["v4"]),
-    ("v6", 0, 6, "Critique puissant", "critique : ×10, puis +5 par niveau", 6000, 1.9, 8,
-     ["v5"]),
-    ("v7", 0, 7, "Prime de rareté", "cartes Rare et plus : vente +100 %", 15000, 1.8, 10,
-     ["v6"]),
-    ("v8", 0, 8, "Recyclage", "doublon perdu : rend 10 % de sa valeur", 40000, 2.2, 5,
-     ["v7"]),
+    ("r1", 0, 4, "Cote ★", "cartes Communes : vente +100 %", 60, 1.3, 20, ["v3"]),
+    ("r2", 0, 5, "Cote ★★", "cartes Peu communes : vente +100 %", 200, 1.32, 20, ["r1"]),
+    ("r3", 0, 6, "Cote ★★★", "cartes Rares : vente +100 %", 800, 1.34, 20, ["r2"]),
+    ("r4", 0, 7, "Cote ★★★★", "cartes Très rares : vente +100 %", 4000, 1.36, 20, ["r3"]),
+    ("r5", 0, 8, "Cote ★★★★★", "cartes Légendaires : vente +100 %", 8000, 1.3, 20,
+     ["r4"]),
+    ("a1", 0, 9, "Vendeur", "vend tes doublons tout seul, de plus en plus vite", 30000, 1.7,
+     5, ["r5"]),
+    ("v8", 0, 10, "Recyclage", "doublon perdu : rend 10 % de sa valeur", 40000, 1.7, 5,
+     ["a1"]),
+    # --- boosters
     ("b1", 1, 1, "Dégâts", "+1 dégât par tape sur un booster", 10, 1.25, 30, ["s1"]),
-    ("b2", 1, 2, "Cartes", "+1 carte par booster", 200, 3.0, 4, ["b1"]),
-    ("b4", 1, 3, "Remise", "boosters −4 %", 1500, 1.8, 10, ["b2"]),
-    ("b5", 1, 4, "Coup de masse", "+4 % de tapes ×5 sur un booster", 8000, 1.7, 10, ["b4"]),
-    ("b7", 1, 5, "Carte bonus", "+5 % de chance d'une carte en plus", 30000, 1.8, 10,
+    ("b2", 1, 2, "Cartes", "+1 carte par booster", 200, 2.4, 4, ["b1"]),
+    ("f1", 1, 3, "Mains rapides", "retourne +1 carte à chaque tape", 600, 2.0, 4, ["b2"]),
+    ("b4", 1, 4, "Remise", "boosters −4 %", 1500, 1.8, 10, ["f1"]),
+    ("b5", 1, 5, "Coup de masse", "+4 % de tapes ×5 sur un booster", 8000, 1.7, 10, ["b4"]),
+    ("b7", 1, 6, "Carte bonus", "+5 % de chance d'une carte en plus", 30000, 1.5, 10,
      ["b5"]),
-    ("c1", 2, 1, "Trèfle", "plus de cartes rares", 100, 2.0, 10, ["s1"]),
-    ("c2", 2, 2, "Chasseur", "+20 % de variantes rares", 1200, 2.0, 10, ["c1"]),
-    ("c3", 2, 3, "Free pack +", "le Free pack donne de meilleures cartes", 2500, 2.0, 6,
+    ("v1", 1, 7, "Doigt musclé", "bouton à taper : +1 pièce par tape", 3000, 1.18, 30,
+     ["b7"]),
+    ("v5", 1, 8, "Coup critique", "+3 % de tapes critiques", 20000, 1.6, 10, ["v1"]),
+    ("v6", 1, 9, "Critique puissant", "critique : ×10, puis +5 par niveau", 40000, 1.6, 8,
+     ["v5"]),
+    # --- chance
+    ("c1", 2, 1, "Trèfle", "plus de cartes rares", 100, 1.6, 10, ["s1"]),
+    ("c2", 2, 2, "Chasseur", "+20 % de variantes rares", 1200, 1.6, 10, ["c1"]),
+    ("c3", 2, 3, "Free pack +", "le Free pack donne de meilleures cartes", 2500, 1.6, 6,
      ["c2"]),
     ("c4", 2, 4, "Aimant", "+4 % : un doublon devient une carte inconnue", 4000, 1.7, 10,
      ["c3"]),
-    ("c5", 2, 5, "Booster doré", "booster doré plus souvent (tous les 15, −1)", 10000, 1.9,
+    ("c5", 2, 5, "Booster doré", "booster doré plus souvent (tous les 15, −1)", 10000, 1.6,
      8, ["c4"]),
-    ("c6", 2, 6, "Prime de nouveauté", "nouvelle carte : encore plus de pièces", 20000, 1.8,
+    ("c6", 2, 6, "Prime de nouveauté", "nouvelle carte : encore plus de pièces", 20000, 1.5,
      10, ["c5"]),
-    ("m1", 1, 9, "Maître collectionneur", "tapes et ventes ×2", 500000, 1.0, 1,
-     ["v8", "b7", "c6"]),
+    ("m1", 1, 11, "Maître collectionneur", "tapes et ventes ×2", 500000, 1.0, 1,
+     ["v8", "v6", "c6"]),
 ]
+WALLET = 100         # pièces maximum au départ (×10 par niveau de « Portefeuille »)
 TECH_BY = {t[0]: t for t in TECH}
 TECH_BRANCHES = [("Vente", "#34c759"), ("Boosters", "#ff9f0a"), ("Chance", "#8e44ad")]
 
@@ -6338,10 +6351,16 @@ class CardBox:
             for a, b in (("click", "v1"), ("luck", "c1")):
                 if old.get(a):
                     self.lv[b] = min(old[a], TECH_BY[b][7])
+        before = levels("lv")
         if self.lv and not self.lv.get("s1"):     # partie d'avant la « Boutique »
-            before = levels("lv")
             self.lv["s1"] = 3 if before.get("b6") else (2 if before.get("b3") else 1)
+        if before.get("v4") and not any(self.lv.get("r%d" % i) for i in range(1, 6)):
+            for i in range(1, 6):                 # ancienne « Valeur » : une cote par rareté
+                self.lv["r%d" % i] = min(20, before["v4"] + (before.get("v7", 0)
+                                                           if i >= 3 else 0))
         self.coins = num("coins", float(START_COINS))
+        while self.coins > self.cap() and self.level("w1") < TECH_BY["w1"][7]:
+            self.lv["w1"] = self.level("w1") + 1  # partie d'avant le portefeuille
         self.daily = raw.get("daily") if isinstance(raw.get("daily"), str) else ""
         self.free = num("free", 0.0)
         self.opened = num("opened", 0, int)
@@ -6374,6 +6393,8 @@ class CardBox:
         t = TECH_BY[key]
         if key == "s1":
             return SHOP_COSTS[min(self.level(key), len(SHOP_COSTS) - 1)]
+        if key == "w1":
+            return int(self.cap() * 0.8)          # toujours payable avec le portefeuille
         return int(t[5] * t[6] ** (self.level(key) * TECH_GROWTH) * TECH_PRICE)
 
     def state(self, key):
@@ -6391,6 +6412,24 @@ class CardBox:
         self.lv[key] = self.level(key) + 1
         self.save()
         return True
+
+    def cap(self):
+        """Pièces maximum : ce qui dépasse est perdu."""
+        return WALLET * 10 ** self.level("w1")
+
+    def gain(self, amount):
+        """Ajoute des pièces, dans la limite du portefeuille. Renvoie ce qui est perdu."""
+        room = max(0.0, self.cap() - self.coins)
+        self.coins += min(amount, room)
+        self.lost = getattr(self, "lost", 0.0) + max(0.0, amount - room)
+        return max(0.0, amount - room)
+
+    def autosell_every(self):
+        """Secondes entre deux ventes automatiques (0 = pas de vendeur)."""
+        return (6 - self.level("a1")) if self.level("a1") else 0
+
+    def flips(self):
+        return 1 + self.level("f1")
 
     def master(self):
         return 2 if self.level("m1") else 1
@@ -6432,7 +6471,7 @@ class CardBox:
         return 1 + self.level("v3")
 
     def value_mult(self):
-        return (1 + 0.5 * self.level("v4")) * self.master()
+        return self.master()
 
     def damage(self):
         return 1 + self.level("b1")
@@ -6448,7 +6487,7 @@ class CardBox:
         if not PACK_KINDS[kind][1]:
             return 0
         return max(1, int(PACK_KINDS[kind][1] * (1 - 0.04 * self.level("b4"))
-                          * (1 + self.opened / float(INFLATION) / 100.0)))
+                          * (1 + min(self.opened, 4500) / float(INFLATION) / 100.0)))
 
     def daily_bonus(self):
         return 300 + 200 * self.level("c4")
@@ -6466,7 +6505,7 @@ class CardBox:
             return 0
         self.daily = time.strftime("%Y-%m-%d")
         bonus = self.daily_bonus()
-        self.coins += bonus
+        self.gain(bonus)
         self.save()
         return bonus
 
@@ -6482,14 +6521,14 @@ class CardBox:
             self.cards[key] = 1
             if var:
                 self.var[key] = var
-            self.coins += 1 + SELL_VALUE[card_tier(app, label, game)] * 2 * \
-                self.level("c6") * self.master()   # 1 pièce, plus la prime de nouveauté
+            self.gain(1 + SELL_VALUE[card_tier(app, label, game)] * 2 *
+                      self.level("c6") * self.master())   # 1 pièce + prime de nouveauté
             return "nouveau"
         if var > self.var.get(key, 0):
             self.var[key] = var
             return "mieux"
         if self.doubles() >= self.capacity():
-            self.coins += self.card_value(app, key) * 0.1 * self.level("v8")   # recyclage
+            self.gain(self.card_value(app, key) * 0.1 * self.level("v8"))   # recyclage
             return "perdu"
         self.cards[key] += 1
         return "doublon"
@@ -6497,8 +6536,8 @@ class CardBox:
     def card_value(self, app, key):
         label, _, g = key.partition("|")
         tier = card_tier(app, label, g)
-        rare = 1 + self.level("v7") if tier >= 2 else 1          # prime de rareté
-        return SELL_VALUE[tier] * VARIANTS[self.var.get(key, 0)][3] * self.value_mult() * rare
+        cote = 1 + 1.0 * self.level("r%d" % (tier + 1))          # cote de cette rareté
+        return SELL_VALUE[tier] * VARIANTS[self.var.get(key, 0)][3] * self.value_mult() * cote
 
     def stock_value(self, app):
         return sum((c - 1) * self.card_value(app, k) for k, c in self.cards.items() if c > 1)
@@ -6517,7 +6556,7 @@ class CardBox:
                 left -= 1
             if not left:
                 break
-        self.coins += total
+        self.gain(total)
         self.sold += n
         return n, total
 
@@ -6900,6 +6939,13 @@ class CardsScreen(Screen):
 
     def idle(self):
         self.ticks += 1
+        box = self.app.cards
+        every = box.autosell_every()
+        if every and self.ticks % (every * 4) == 0 and box.doubles():
+            n, total = box.sell(self.app)            # le vendeur travaille tout seul
+            self.show_coins()
+            self.show_stock()
+            self.floating(self.sell_btn, "+%s" % big(total), UP, 16)
         if self.ticks % 8 == 0:
             self.app.cards.save_soon()
             if self.afford != self.afford_sig():     # un achat devient possible
@@ -6917,7 +6963,10 @@ class CardsScreen(Screen):
 
     def show_coins(self):
         if self.coin_lbl is not None:
-            self.coin_lbl.text = "🪙 %s" % big(self.app.cards.coins)
+            full = box.coins >= box.cap()
+            self.coin_lbl.text = "🪙 %s / %s%s" % (big(box.coins), big(box.cap()),
+                                                   "  PLEIN" if full else "")
+            self.coin_lbl.text_color = DOWN if full else self.app.theme["text"]
 
     def floating(self, btn, text, color, size=18):
         now = time.time()                     # quelques textes à la fois, pas des dizaines
@@ -6936,7 +6985,7 @@ class CardsScreen(Screen):
         crit = random.random() < box.crit_chance()
         if crit:
             power *= box.crit_mult()
-        box.coins += power
+        box.gain(power)
         box.taps += 1
         self.show_coins()
         if self.tap_btn is not None:
@@ -7010,9 +7059,9 @@ class CardsScreen(Screen):
         head = ui.View(frame=(pad, y, cw, 78), background_color=t["card"])
         head.corner_radius = 16
         head.add_subview(gradient_view((0, 0, cw, 78), "#ff9f0a", 16, 0.4))
-        self.coin_lbl = make_label("🪙 %s" % big(box.coins), (16, 8, cw - 32, 34), 28, True,
-                                   t["text"])
+        self.coin_lbl = make_label("", (16, 8, cw - 32, 34), 24, True, t["text"])
         head.add_subview(self.coin_lbl)
+        self.show_coins()
         total = sum(len(GAMES_BY[l]) for l in LABELS)
         head.add_subview(make_label("%d / %d cartes  •  %s ouvert%s" % (
             len(box.cards), total, plural(box.opened, "booster"),
@@ -7116,6 +7165,8 @@ class TechScreen(Screen):
             hud("%s : niveau maximum" % t[3], "success", 1.0)
         elif state == "bloqué":
             hud("Achète d'abord l'amélioration du dessus", "error", 1.2)
+        elif box.cost(key) > box.cap():
+            hud("Portefeuille trop petit : améliore-le d'abord", "error", 1.4)
         elif not box.buy(key):
             hud("Il te manque %s pièces" % big(box.cost(key) - box.coins), "error", 1.2)
         else:
@@ -7140,8 +7191,8 @@ class TechScreen(Screen):
             return
         box = app.cards
         pad = 10
-        sv.add_subview(make_label("🪙 %s" % big(box.coins), (pad, 8, w - 2 * pad, 30), 24, True,
-                                  t["text"], "center"))
+        sv.add_subview(make_label("🪙 %s / %s" % (big(box.coins), big(box.cap())),
+                                  (pad, 8, w - 2 * pad, 30), 22, True, t["text"], "center"))
         sv.add_subview(make_label("Touche une case pour acheter un niveau. Une case débloque "
                                   "celle du dessous.", (pad, 40, w - 2 * pad, 16), 11, False,
                                   t["sub"], "center"))
@@ -7195,7 +7246,9 @@ class TechScreen(Screen):
             node.add_subview(make_label(
                 "✓ maximum" if full else ("🔒 " if state == "bloqué" else "🪙 ") + big(cost),
                 (4, nh - 22, nw - 8, 16), 11, True,
-                "white" if full else (UP if can else t["sub"]), "center"))
+                "white" if full else (UP if can else
+                                      (DOWN if cost > box.cap() and state == "possible"
+                                       else t["sub"])), "center"))
             b = ui.Button(frame=(0, 0, nw, nh))
             b.action = lambda s, k=key: self.buy(k)
             node.add_subview(b)
@@ -7433,11 +7486,17 @@ class PackScreen(Screen):
         else:
             shake(pack, burst)
 
-    def flip(self, i, quiet=False):
-        """Retourne une carte : elle pivote, puis montre sa face."""
+    def flip(self, i, quiet=False, more=None):
+        """Retourne une carte : elle pivote, puis montre sa face. Avec « Mains rapides »,
+        les cartes suivantes se retournent aussi."""
         if self.shown[i] or not self.torn:
             return
+        more = self.app.cards.flips() - 1 if more is None else more
         self.shown[i] = True
+        if more > 0:
+            rest = [j for j in range(len(self.pack)) if not self.shown[j]]
+            if rest:
+                self.flip(rest[0], quiet=True, more=more - 1)
         back = self.slots.get(i)
         label, g, tier, var = self.pack[i]
 
@@ -7473,7 +7532,7 @@ class PackScreen(Screen):
 
     def flip_all(self):
         for i in range(len(self.pack)):
-            self.flip(i, quiet=True)
+            self.flip(i, quiet=True, more=0)
         self.refresh_bottom()
 
 
